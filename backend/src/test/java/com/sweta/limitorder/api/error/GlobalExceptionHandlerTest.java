@@ -1,5 +1,6 @@
 package com.sweta.limitorder.api.error;
 
+import com.sweta.limitorder.matching.OrderNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -9,6 +10,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -71,6 +74,19 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().code()).isEqualTo("FORBIDDEN");
+    }
+
+    @Test
+    void orderNotFoundReturns404() {
+        UUID orderId = UUID.randomUUID();
+
+        ResponseEntity<ErrorResponse> response =
+                advice.handleOrderNotFound(new OrderNotFoundException(orderId));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().code()).isEqualTo("NOT_FOUND");
+        assertThat(response.getBody().message()).contains(orderId.toString());
     }
 
     @Test
