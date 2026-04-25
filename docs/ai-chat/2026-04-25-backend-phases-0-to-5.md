@@ -1,9 +1,11 @@
-# AI Coding Assistant — Backend Implementation Session (Phases 0–5)
+# AI Coding Assistant — Backend Implementation Session (Phases 0–8)
 
 **Date:** 2026-04-25
 **Participants:** Sweta Paudel (engineer) and Claude (AI coding assistant)
-**Session purpose:** Implement backend Phases 0 through 5 from [`docs/plans/backend-plan.md`](../plans/backend-plan.md), per the spec in [`docs/requirnments/limit-order-requirements.md`](../requirnments/limit-order-requirements.md), the architecture in [`docs/architecture/architecture.md`](../architecture/architecture.md), and the project standards in [`.claude/instructions.md`](../../.claude/instructions.md).
-**Outcome:** **62/62 tests green** at the end of the session. Backend reaches the "REST API in front of a working matching engine, behind JWT auth" milestone. 7 atomic commits + the prior docs commit.
+**Session purpose:** Implement backend Phases 0 through 8 from [`docs/plans/backend-plan.md`](../plans/backend-plan.md), per the spec in [`docs/requirnments/limit-order-requirements.md`](../requirnments/limit-order-requirements.md), the architecture in [`docs/architecture/architecture.md`](../architecture/architecture.md), and the project standards in [`.claude/instructions.md`](../../.claude/instructions.md).
+**Outcome:** **98/98 tests green** at the end of the session. Backend is feature-complete through the WebSocket layer; the multi-instance NFR (1-second cross-node visibility) is empirically proven in `CrossNodeWsIntegrationTest`. 11 atomic backend commits + 2 docs commits.
+
+> **File-history note.** This transcript was first produced (covering Phases 0–5) at Turn 9 below; Turns 10–13 were appended later in the same session as Phases 6, 7, and 8 landed. The filename keeps its original `phases-0-to-5` suffix for stability of any links, but the content covers 0–8.
 
 This transcript exists per Deliverable §8.6 of the requirements ("Agent chat history export — committed to the repo under `docs/ai-chat/`"). It is a faithful record of how each phase was produced, the decisions made, and the friction points encountered.
 
@@ -384,7 +386,7 @@ The matching engine's already done from Phase 3. Phase 5 is pure HTTP wrapping: 
 
 ---
 
-## Turn 9 — Export this transcript
+## Turn 9 — First export of this transcript (covering Phases 0–5)
 
 ### User
 
@@ -392,13 +394,196 @@ The matching engine's already done from Phase 3. Phase 5 is pure HTTP wrapping: 
 
 ### Assistant
 
-This file is the result. Sibling to [`2026-04-24-design-session.md`](2026-04-24-design-session.md) (the design conversation), this one captures the implementation session — the eight turns above plus this one.
+I created this file to cover Turns 1–8. It was sibling to [`2026-04-24-design-session.md`](2026-04-24-design-session.md) (the design conversation). The committed content was the eight turns above plus this one and the appendices.
+
+Later in the same session, Phases 6–8 landed and Turn 13 below extended this file with Turns 10–12.
+
+`e47c531 docs: add 2026-04-25 backend implementation transcript (phases 0–5)`
+
+---
+
+## Turn 10 — Backend Phase 6 (read API)
+
+### User
+
+> Start implementing phase 6.
+
+### Assistant
+
+The HTTP read surface that drives the §6.2 Market Overview, §6.3 Symbol Detail, and §6.4 My Fills screens. Three new query services, four new controllers, plus integration tests against the §5.3 seed scenario for every read.
+
+#### Book layer (`com.sweta.limitorder.book`)
+
+- `BookLevel(price, qty, userCount)` — one aggregated price level. `userCount` is `COUNT(DISTINCT user_id)` per architecture §6.3 (the wireframe's "Users" column).
+- `BookSnapshot(symbol, bids, asks, last, cursor)` — top-5 bids + top-5 asks + last trade price + outbox cursor. The cursor is `MAX(market_event_outbox.id)` at snapshot time; Phase 8's WS layer tags forwarded events with their outbox id so clients drop deltas where `id <= cursor` (architecture §4.8).
+- `BookTotals(demand, supply)` — `SUM(quantity - filled_qty)` per side per symbol; drives the §6.2 Market Overview row.
+- `BookQueryService`:
+  - `snapshot()` runs at `@Transactional(readOnly=true, isolation=REPEATABLE_READ)` — the four reads (bids, asks, last trade, cursor) MUST observe the same MVCC view. At Postgres' default READ COMMITTED, every statement gets its own MVCC view; a write committed mid-method could leave the cursor pointing at an event whose effects are already in the snapshot's state, defeating the WS race fix.
+  - `totals()` is two SUM queries — order-independent, default isolation is fine.
+- The top-N levels query is partial-index-friendly (`orders.symbol, side, price, status` — same index the matching engine's `selectBestOpposite` uses).
+
+#### Symbols layer (`com.sweta.limitorder.api.symbols`)
+
+- `SymbolResponse` record + `SymbolController @ GET /api/symbols`.
+- Sorted alphabetically — deterministic for tests; FE can re-sort.
+
+#### Fills layer (`com.sweta.limitorder.fills` + `.api.fills`)
+
+- `MyFillResponse(tradeId, symbol, side, price, quantity, executedAt, counterparty)`.
+- `FillsQueryService.findByUser` does a single SQL with two joins to `users` and computes the caller's perspective server-side per architecture §6.5:
+  ```
+  side          = CASE WHEN buy_user_id = :me THEN 'BUY' ELSE 'SELL' END
+  counterparty  = CASE WHEN buy_user_id = :me THEN sell_user.username
+                                              ELSE buy_user.username END
+  ```
+  No UUIDs leak to the wire — the §6.4 wireframe's "Counter | u2" column is a username, not a UUID.
+- `FillsController @ GET /api/fills/mine`.
+
+#### Tests (80 passing, 18 new across 3 files)
+
+- `BookControllerIntegrationTest` (11 cases): auth/symbol-validation 401/400, empty book → empty levels + null last + zero cursor, the §5.3 seed scenario replayed and asserted against §5.4 EXACTLY (AAPL bids/asks shape, last=180.50, cursor>0; MSFT asks-only with last=421.00; GOOGL no-trade so last=null), §6.2 market-overview totals (AAPL demand=50/supply=330, MSFT 0/30), multi-user-same-price aggregation (qty sums, userCount counts distinct).
+- `SymbolControllerIntegrationTest` (2 cases): 401 without auth, alphabetical list with refPrices matching spec §5.1.
+- `FillsControllerIntegrationTest` (5 cases): 401 without auth, empty list for users with no trades, single trade between Alice and Bob shows correct sides + counterparty usernames on both sides, multiple trades come back newest-first, fills are user-scoped (a trade between u3 and u4 is invisible to u1 and u2).
+
+#### Test setup pattern worth recording
+
+State is built via `MatchingEngineService` directly (autowired) rather than POSTing through HTTP for every order. Phase 5 already covers the POST surface end-to-end; Phase 6 tests focus on the read-side queries against a known book state. Less token-shuffling, faster tests.
+
+`f73e93f backend: phase 6 — read API (symbols, book snapshot, totals, my fills)`
+
+---
+
+## Turn 11 — Backend Phase 7 (outbox listener, fan-out, janitor)
+
+### User
+
+> Start implementing phase 7.
+
+### Assistant
+
+The multi-instance NFR comes alive. The V1 NOTIFY trigger has been firing since Phase 2; this turn builds the consumer side.
+
+```
+match tx COMMIT
+    └─► trigger fires pg_notify('market_event', NEW.id::text)
+             ──► OutboxListener.getNotifications  (dedicated connection)
+                       └─► OutboxFanout.handle(id)
+                                 └─► OutboxRepository.findById
+                                            └─► WsBroker.publish
+```
+
+#### WS layer (`com.sweta.limitorder.ws`)
+
+- `WsBroker` interface — single method `publish(channel, payload, cursor)`. Cursor is the outbox row id; clients deduplicate against snapshots (architecture §4.8 race fix). Phase 8 contributes the real `InMemoryWsBroker`.
+- `LoggingWsBroker @Component` — Phase 7 default; logs every publish at DEBUG so the pipeline is observable end-to-end before WS sessions exist. Will be deleted/replaced in Phase 8.
+
+#### Outbox layer (`com.sweta.limitorder.outbox`)
+
+- `OutboxRow` + `OutboxRepository` — small JdbcTemplate-backed repo with `findById(long)` and `deleteOlderThan(Instant)`. Reads `payload::text` so the WS payload arrives as a verbatim JSON string — no Jackson roundtrip lossiness.
+- `OutboxFanout` — fetches the row by id, forwards to `WsBroker`. Logs `OUTBOX_ROW_MISSING` at DEBUG when the janitor has outpaced delivery (late delivery is harmless, clients deduplicate).
+- `OutboxListener`:
+  - Holds ONE dedicated JDBC connection opened via `DriverManager` — **deliberately bypassing Hikari**. Hikari rotates / closes / leak-detects connections; if it ever rotated the LISTEN connection, the registration would silently disappear and we'd miss every NOTIFY.
+  - `@PostConstruct`: opens connection, runs `LISTEN market_event`, starts a daemon thread polling `getNotifications(1000ms)`.
+  - `@PreDestroy`: sets `stopRequested`, closes the connection (which unblocks the thread's `getNotifications` with an `SQLException`), joins within 5 s — fast deterministic shutdown without `Thread.interrupt()` games.
+- `OutboxJanitor @Scheduled`: runs every minute, deletes outbox rows older than `app.outbox.retention-minutes` (default 5).
+
+#### Application
+
+- `@EnableScheduling` on `LobApplication` (powers the janitor's `@Scheduled`).
+- `backend/pom.xml`: `postgresql` JDBC bumped from runtime to compile scope — `OutboxListener` compiles directly against `PGConnection` / `PGNotification`.
+
+#### The big bug encountered
+
+First test run: 71 errors out of 86 tests. Cascade caused by `OutboxListener` failing to start in test contexts. Root cause:
+
+```java
+// First attempt — broken in tests
+public OutboxListener(@Value("${spring.datasource.url}") String url, ...)
+```
+
+`@Value("${spring.datasource.url}")` reads the **property value**. Testcontainers' `@ServiceConnection` wires the dynamic URL via `JdbcConnectionDetails` — it does **not** set `spring.datasource.url` as a property. So the listener got the application.yml default (`jdbc:postgresql://localhost:5432/lob`) instead of the actual Testcontainers URL, and tried to connect to a port nothing was listening on.
+
+**Fix:** inject `JdbcConnectionDetails` (Spring Boot 3.1+ abstraction) and read `getJdbcUrl() / getUsername() / getPassword()` from it. Same code now works in both production (Hikari config from application.yml) and tests (dynamic Testcontainers URL).
+
+#### Tests (86 passing, 6 new across 2 files)
+
+- `OutboxListenerIntegrationTest` (4 cases) — uses `@MockBean WsBroker` so the real `LoggingWsBroker` is replaced with a Mockito stub; verifications use Awaitility (max 5s):
+  - listener thread alive after context startup
+  - INSERT into outbox → trigger fires NOTIFY → listener forwards to broker with right channel + payload
+  - cursor monotonically increases across a burst of 3 inserts
+  - different channels (`book:AAPL`, `trades:MSFT`, `orders:{userId}`) routed independently
+- `OutboxJanitorIntegrationTest` (2 cases): row inserted with `created_at = now() - 1h` is purged; fresh row preserved; purge on empty table is no-op.
+
+`4b0e2e0 backend: phase 7 — outbox listener, fan-out, janitor (cross-node lives now)`
+
+---
+
+## Turn 12 — Backend Phase 8 (WebSocket layer, multi-instance NFR proven)
+
+### User
+
+> Start implementing phase 8.
+
+### Assistant
+
+The full real-time path wired end-to-end and proven across two JVMs sharing one Postgres. Architecture §3 NFR ("trade visible cross-node within 1 second") empirically demonstrated in `CrossNodeWsIntegrationTest`.
+
+#### WS layer (`com.sweta.limitorder.ws`)
+
+- `WsFrame` — snapshot/delta JSON envelope helper. Channel and cursor are server-controlled (no risky chars), so string interpolation is safe; payload is already JSON (Jackson for snapshots, verbatim outbox payload for deltas), spliced unquoted.
+- `InMemoryWsBroker @Component` (replaces Phase 7's `LoggingWsBroker`):
+  - `subscribe(channel, session)` / `unsubscribeAll(session)` backed by `ConcurrentMap<String, Set<WebSocketSession>>`. Concurrent register/unregister from request threads + publish from the listener thread is proven safe by `InMemoryWsBrokerTest`'s 32×1000-iteration soak.
+  - `publish(channel, payload, cursor)` wraps in a delta envelope and writes to every subscribed session; concurrent writes per session serialised with `synchronized(session)` since `WebSocketSession.sendMessage` is not documented thread-safe.
+  - `sendSnapshot` used by handlers on connect.
+- `JwtHandshakeInterceptor` — snapshots `SecurityContextHolder`'s `AuthenticatedUser` principal at handshake time and copies userId/name into the session attributes; `SecurityContext` isn't accessible from message handlers. Defense-in-depth: rejects 401 if no authenticated principal present at handshake.
+- `BookWsHandler @ /ws/book/{symbol}` — parses symbol from URI; rejects unknown symbols with `CloseStatus.BAD_DATA`. On connect: send `BookSnapshot` (Phase 6 query, REPEATABLE READ, includes cursor), then subscribe to BOTH `book:{symbol}` AND `trades:{symbol}`.
+- `OrdersWsHandler @ /ws/orders/mine` — snapshot the user's orders + cursor via the new `MyOrdersSnapshotService`, subscribe to `orders:{userId}`.
+- `WebSocketConfig` — `@EnableWebSocket`, both handlers registered with the JWT handshake interceptor and `setAllowedOriginPatterns("*")` for dev ergonomics.
+
+#### Read-side support (`com.sweta.limitorder.orders`)
+
+- `MyOrdersSnapshotService.snapshot(userId)` — orders + cursor in a single REPEATABLE READ transaction (same race-fix design as `BookQueryService.snapshot`).
+
+#### Tests (98 passing, 12 new across 4 files)
+
+- `InMemoryWsBrokerTest` (3 cases): 32-thread × 1000-iteration concurrent subscribe/unsubscribe — no exceptions, no leaked memberships; publish to empty channel is no-op; closed sessions skipped during publish.
+- `BookWsHandlerIntegrationTest` (5 cases): handshake without token rejected (Phase 8.1); snapshot frame delivered immediately on connect with the expected book contents (Phase 8.3); delta forwarded for crossing submits; book + trades deltas both delivered for a match; unknown symbol closes with BAD_DATA.
+- `OrdersWsHandlerIntegrationTest` (3 cases): snapshot includes user's existing orders (Phase 8.4); delta forwarded when caller's order state changes; deltas for OTHER users' orders never delivered to the caller's channel.
+- **`CrossNodeWsIntegrationTest` (Phase 8.6 — the big one)**: `@TestInstance(PER_CLASS) @BeforeAll` boots a SECOND `ApplicationContext` via `SpringApplicationBuilder` against the same Testcontainers Postgres (URL/credentials read from the primary's `JdbcConnectionDetails` and passed as `--command-line` args so they outrank `application.yml`'s default). The test WS-connects to the PRIMARY, POSTs a crossing order to the SECONDARY, asserts the delta arrives on the WS within the §3 NFR's 1-second budget. Time-to-delivery printed in the assertion message for visibility.
+
+#### Three friction points worth recording
+
+1. **Server-side: `BookWsHandler` subscribes to the broker AFTER sending the snapshot** (no out-of-order frames at the client). Tests therefore must wait on `broker.subscriberCount(channel) > 0` before triggering the engine — otherwise a NOTIFY can fire while the subscription is still pending and the delta is silently dropped. Pattern: `awaitSubscribed(channel)` helper using Awaitility.
+2. **`SpringApplicationBuilder.properties()` registers DEFAULT-precedence properties** — `application.yml`'s default wins. Switched to `SpringApplicationBuilder.run("--spring.datasource.url=...")` which passes them as command-line args (highest precedence). Without this, the secondary instance silently falls back to localhost:5432 and fails to connect.
+3. **`@MockBean WsBroker` (interface) was not enough** for `OutboxListenerIntegrationTest` after Phase 8 — `BookWsHandler` injects the concrete `InMemoryWsBroker` for session-management methods (`subscribe`/`sendSnapshot`/`unsubscribeAll`) that aren't on the interface. Switched to `@MockBean InMemoryWsBroker` — Spring's bean-by-type lookup considers the mock's full type hierarchy, so `OutboxFanout`'s `WsBroker` injection is also satisfied.
+
+Also: a non-crossing `engine.submit(...)` doesn't fire any outbox events (the engine emits only inside the match loop). Two tests had to be reworked to pre-seed an opposing order so the trigger submit actually crosses → outbox events → delta. Worth flagging as a design observation: the engine doesn't currently emit a `book:` event when a new order rests without matching. The architecture's per-order snapshot-on-reconnect design papers over this; Phase 9 may add explicit emit-on-rest events.
+
+`c866349 backend: phase 8 — websocket layer (multi-instance NFR proven)`
+
+---
+
+## Turn 13 — Extend this transcript with Phases 6–8
+
+### User
+
+> Add our entire conversation history from this session which are missing in the `limit-order-app/docs/ai-chat/2026-04-25-backend-phases-0-to-5.md` file.
+
+### Assistant
+
+This is the result. Turns 10, 11, 12 (Phases 6, 7, 8) and this turn were appended in place; the original Turns 1–9 stay verbatim. The header was updated to reflect the broader scope ("Phases 0–8") and the outcome (98/98 tests, 11 backend commits + 2 docs commits). Appendices A, B, C, D, E were extended below to incorporate the new commits, tests, decisions, deferred items, and friction points.
+
+The filename keeps its `phases-0-to-5` suffix to avoid breaking any references to it; the in-file title is now the source of truth on actual scope.
 
 ---
 
 ## Appendix A — Commits produced this session
 
 ```
+c866349 backend: phase 8 — websocket layer (multi-instance NFR proven)
+4b0e2e0 backend: phase 7 — outbox listener, fan-out, janitor (cross-node lives now)
+f73e93f backend: phase 6 — read API (symbols, book snapshot, totals, my fills)
+e47c531 docs: add 2026-04-25 backend implementation transcript (phases 0–5)
 ccff554 backend: phase 5 — order REST API in front of the matching engine
 b4a82bb backend: phase 4 — JWT authentication, BCrypt login, hardened security
 0ed7859 backend: phase 3 — matching engine + scenario test green (the keystone)
@@ -412,7 +597,7 @@ ff32c57 backend: keep Maven artifacts inside backend/, drop root aggregator POM
 
 ## Appendix B — Test count by phase
 
-| Phase | Test classes | Tests | Cumulative |
+| Phase | Test classes added | Tests added | Cumulative |
 |---|---|---|---|
 | 0 | — | 0 | 0 |
 | 1 | LobApplicationTests, GlobalExceptionHandlerTest, MdcEnrichmentFilterTest | 9 | 9 |
@@ -420,6 +605,9 @@ ff32c57 backend: keep Maven artifacts inside backend/, drop root aggregator POM
 | 3 | + AdvisoryLockSupportTest, MatchingEngineServiceTest, ScenarioTest, ConcurrencySoakTest | +17 | 31 |
 | 4 | + JwtServiceTest, AuthIntegrationTest | +15 | 46 |
 | 5 | + OrderControllerIntegrationTest | +16 | 62 |
+| 6 | + BookControllerIntegrationTest, SymbolControllerIntegrationTest, FillsControllerIntegrationTest | +18 | 80 |
+| 7 | + OutboxListenerIntegrationTest, OutboxJanitorIntegrationTest | +6 | 86 |
+| 8 | + InMemoryWsBrokerTest, BookWsHandlerIntegrationTest, OrdersWsHandlerIntegrationTest, CrossNodeWsIntegrationTest | +12 | 98 |
 
 ## Appendix C — Key decisions, in one place
 
@@ -435,7 +623,7 @@ ff32c57 backend: keep Maven artifacts inside backend/, drop root aggregator POM
 | Match condition | `bid.price >= ask.price` (verified in Phase 3 by replaying §5.3 through engine) | Phase 3 |
 | Trade price | The **resting** order's price (price improvement to taker) | architecture §2.2 / Phase 3 |
 | Idempotency | `UNIQUE(user_id, client_order_id)` + advisory-lock-protected SELECT-then-INSERT | Phase 2 schema + Phase 3 engine |
-| Outbox payloads | Minimal placeholders for now; Phase 7 owns the WS-wire schema | Phase 3 |
+| Outbox payloads (Phase 3) | Minimal placeholders for now; Phase 7 owns the WS-wire schema | Phase 3 |
 | ID generation | `UUID.randomUUID()` (UUIDv4) for now; UUIDv7 deferred | Phase 3 |
 | Auth model | Stateless JWT (HS256, 12h), BCrypt-hashed seed users, `AuthenticatedUser` principal | Phase 4 |
 | Login identifier | `username = "u1"` (not `"alice"`) — spec §5.2 wins over plan example | Phase 4 |
@@ -443,17 +631,26 @@ ff32c57 backend: keep Maven artifacts inside backend/, drop root aggregator POM
 | WS auth fallback | Bearer header first, then `?token=` query parameter | Phase 4 / architecture §4.9 |
 | 201 vs 200 on POST | 201 first, 200 idempotent replay; body carries `idempotentReplay` flag | Phase 5 |
 | Unknown symbol | 400 `VALIDATION_FAILED` (controller pre-check), not 409 (DB FK) | Phase 5 |
+| Snapshot/cursor consistency | `@Transactional(readOnly=true, isolation=REPEATABLE_READ)` on `BookQueryService.snapshot` and `MyOrdersSnapshotService.snapshot` so the four reads observe the same MVCC view | Phase 6 / Phase 8 |
+| `counterparty` derivation | Server-side `CASE WHEN buy_user_id = :me THEN sell_user.username ELSE buy_user.username END` — UUIDs never leak to the wire | Phase 6 |
+| Outbox listener connection | Dedicated `DriverManager` connection, NOT Hikari — Hikari rotates / closes / leak-detects, which would silently drop the LISTEN registration | Phase 7 |
+| Listener credentials in tests | `JdbcConnectionDetails` (Spring Boot 3.1+) reflects whatever is wired up — Hikari config in prod, dynamic Testcontainers URL in tests. `@Value("${spring.datasource.url}")` reads the *property* and breaks under `@ServiceConnection` | Phase 7 |
+| WS subscribe order | After snapshot send, not before — pairs with cursor-based dedup on the client. Tests use `awaitSubscribed(channel)` for determinism | Phase 8 |
+| Cross-node test bootstrap | `SpringApplicationBuilder.run("--spring.datasource.url=...")` — `.properties()` is LOWEST precedence and `application.yml` defaults win | Phase 8 |
 
 ## Appendix D — Deferred items (worth knowing in a deep-dive Q&A)
 
 | Deferred | Why | Owner phase |
 |---|---|---|
 | `/actuator/prometheus` registration | Spring Boot 3.3.5 + Micrometer 1.13.6 + Prometheus 1.x client quirk; needs proper meter wiring | Phase 9 (observability polish) |
+| Real outbox payload schemas | Phase 3 emits placeholder JSON (`{"event":"TRADE",...}`); the WS wire schema still needs to be locked down | Phase 9 / continued |
+| Emit-on-rest outbox event | A non-crossing LIMIT submit currently fires no outbox events (engine emits only inside match loop); a `book:` event for a fresh resting order would let the FE update without a snapshot | Phase 9 |
+| `OutboxListener` health indicator | Architecture §4.10 mentions it; currently `OutboxListener.isRunning()` is exposed but not wired to `/actuator/health` | Phase 9 |
+| `OutboxListener` reconnect on connection drop | Currently terminates the thread; production would reconnect with backoff | Future / "with more time" |
 | UUIDv7 generation | Java has no built-in; would need a small util class or a tiny dep. Use of UUIDv4 doesn't affect correctness | Follow-up commit |
 | Soak-test scale at 100k submissions | Throughput-ceilinged by per-symbol advisory lock; correctness invariants hold at any scale | Future / "with more time" |
 | Class rename `LobApplication → LimitOrderApplication`, artifactId `lob-backend → limit-order-backend` | Out of scope for the package rename ask; one-grep follow-up if wanted | Optional follow-up |
 | Self-trade prevention (Alice's BUY shouldn't cross her own SELL) | Documented in architecture §9.7 as known gap; cheap `WHERE` predicate addition | Future / "with more time" |
-| Outbox JSON payloads (real WS schema) | Placeholders work for the engine; WS layer owns the real shape | Phase 7 |
 
 ## Appendix E — Friction points encountered (and resolutions)
 
@@ -464,6 +661,12 @@ ff32c57 backend: keep Maven artifacts inside backend/, drop root aggregator POM
 5. **JDK `HttpURLConnection` POST+401 streaming retry quirk** in `AuthIntegrationTest`. → Added `httpclient5` test dep so `TestRestTemplate` uses Apache HttpClient.
 6. **`.claude/instructions.md` accidentally `.gitignore`d** in Phase 1 commit. → Discovered during the Phase 4 rename audit; fixed in `bac2121`.
 7. **Multi-module Maven setup contradicting architecture's "single module" rule.** → Restructured in `ff32c57` after user pushback.
+8. **`OutboxListener` `@Value("${spring.datasource.url}")` broke in tests** — Testcontainers `@ServiceConnection` wires URL via `JdbcConnectionDetails`, not as a property. Caused 71 cascading test failures. → Switched to `JdbcConnectionDetails` injection.
+9. **`@ConditionalOnMissingBean(WsBroker.class)` on `LoggingWsBroker` interacted poorly with `@MockBean WsBroker`** in tests. → Removed the conditional in Phase 7; Phase 8 deletes `LoggingWsBroker` outright when `InMemoryWsBroker` arrives.
+10. **`SpringApplicationBuilder.properties("k=v")` is LOWEST precedence**, lost to `application.yml`'s defaults. Caused `CrossNodeWsIntegrationTest` to fall back to localhost:5432. → Switched to `.run("--k=v")` (highest precedence).
+11. **`@MockBean WsBroker` (interface) didn't satisfy `BookWsHandler`'s concrete `InMemoryWsBroker` injection** — Spring registered the mock under the interface only. → Switched to `@MockBean InMemoryWsBroker`; Spring's type-hierarchy lookup satisfies both injection points (interface and concrete).
+12. **WS handler subscribe-after-snapshot race** — tests must wait on `broker.subscriberCount(channel) > 0` before triggering deltas; otherwise the NOTIFY can fire while the subscription is still pending and the delta is silently dropped. → `awaitSubscribed(channel)` helper using Awaitility (max 2s).
+13. **Non-crossing `engine.submit(...)` fires no outbox events** — engine emits only inside the match loop. → Tests pre-seed an opposing order so the test submit crosses. Architecture-level "emit on rest" deferred to Phase 9.
 
 ## Appendix F — Why this transcript exists
 
