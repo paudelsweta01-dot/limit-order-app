@@ -1,5 +1,6 @@
 package com.sweta.limitorder.matching;
 
+import com.sweta.limitorder.observability.EventLog;
 import com.sweta.limitorder.outbox.OutboxWriter;
 import com.sweta.limitorder.persistence.OrderRepository;
 import com.sweta.limitorder.persistence.OrderRow;
@@ -7,6 +8,8 @@ import com.sweta.limitorder.persistence.OrderSide;
 import com.sweta.limitorder.persistence.OrderStatus;
 import com.sweta.limitorder.persistence.OrderType;
 import com.sweta.limitorder.persistence.TradeRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -30,6 +33,11 @@ import java.util.UUID;
  * architecture §4.3. The short version: it's the simplest design that
  * preserves the §3 NFR "correctness under concurrency" with a defensible
  * deep-dive story.
+ *
+ * <p>Observability (Phase 9): every state-changing path emits a structured
+ * log event ({@link EventLog}) so {@code grep '"event":"ORDER_FILLED"'} on a
+ * captured run finds exactly the right lines, and four Micrometer meters
+ * track throughput / rejections / match latency.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,6 +48,7 @@ public class MatchingEngineService {
     private final OrderRepository orders;
     private final TradeRepository trades;
     private final OutboxWriter outbox;
+    private final MeterRegistry meters;
 
     public static final String INSUFFICIENT_LIQUIDITY = "INSUFFICIENT_LIQUIDITY";
 
@@ -54,97 +63,153 @@ public class MatchingEngineService {
      */
     @Transactional
     public OrderResult submit(SubmitOrderCommand cmd) {
-        locks.lockForSymbol(cmd.symbol());
+        Timer.Sample matchTimer = Timer.start(meters);
+        try {
+            meters.counter("orders_received_total",
+                    "type",   cmd.type().name(),
+                    "symbol", cmd.symbol()).increment();
 
-        Optional<OrderRow> existing = orders.findByClientOrderId(cmd.userId(), cmd.clientOrderId());
-        if (existing.isPresent()) {
-            OrderRow e = existing.get();
-            log.info("event=ORDER_IDEMPOTENT orderId={} clientOrderId={} status={}",
-                    e.orderId(), e.clientOrderId(), e.status());
-            return new OrderResult(e.orderId(), e.status(), e.filledQty(), e.rejectReason(), true);
-        }
+            locks.lockForSymbol(cmd.symbol());
 
-        UUID orderId = UUID.randomUUID();
-        BigDecimal limitPrice = cmd.type() == OrderType.LIMIT ? cmd.price() : null;
-
-        orders.insertNew(new OrderRow(
-                orderId, cmd.clientOrderId(), cmd.userId(), cmd.symbol(),
-                cmd.side(), cmd.type(), limitPrice,
-                cmd.quantity(), 0L, OrderStatus.OPEN,
-                null, null, null));
-
-        log.info("event=ORDER_ACCEPTED orderId={} clientOrderId={} symbol={} side={} type={} price={} qty={}",
-                orderId, cmd.clientOrderId(), cmd.symbol(),
-                cmd.side(), cmd.type(), limitPrice, cmd.quantity());
-
-        long incomingFilled = 0L;
-        long incomingRemaining = cmd.quantity();
-
-        while (incomingRemaining > 0) {
-            Optional<OrderRow> bestOpt = orders.selectBestOpposite(
-                    cmd.symbol(), cmd.side(), cmd.type(), limitPrice);
-            if (bestOpt.isEmpty()) {
-                break;
+            Optional<OrderRow> existing = orders.findByClientOrderId(cmd.userId(), cmd.clientOrderId());
+            if (existing.isPresent()) {
+                OrderRow e = existing.get();
+                log.info(EventLog.event(EventLog.ORDER_ACCEPTED,
+                                "orderId",       e.orderId(),
+                                "clientOrderId", e.clientOrderId(),
+                                "symbol",        e.symbol(),
+                                "status",        e.status().name(),
+                                "idempotent",    true),
+                        "idempotent replay returns existing order");
+                return new OrderResult(e.orderId(), e.status(), e.filledQty(), e.rejectReason(), true);
             }
 
-            OrderRow resting = bestOpt.get();
-            long tradeQty = Math.min(incomingRemaining, resting.remainingQty());
-            BigDecimal tradePrice = resting.price(); // §2.2: resting order's price wins
+            UUID orderId = UUID.randomUUID();
+            BigDecimal limitPrice = cmd.type() == OrderType.LIMIT ? cmd.price() : null;
 
-            long newIncomingFilled = incomingFilled + tradeQty;
-            OrderStatus newIncomingStatus = newIncomingFilled == cmd.quantity()
-                    ? OrderStatus.FILLED : OrderStatus.PARTIAL;
-            orders.applyFill(orderId, tradeQty, newIncomingStatus);
+            orders.insertNew(new OrderRow(
+                    orderId, cmd.clientOrderId(), cmd.userId(), cmd.symbol(),
+                    cmd.side(), cmd.type(), limitPrice,
+                    cmd.quantity(), 0L, OrderStatus.OPEN,
+                    null, null, null));
 
-            long newRestingFilled = resting.filledQty() + tradeQty;
-            OrderStatus newRestingStatus = newRestingFilled == resting.quantity()
-                    ? OrderStatus.FILLED : OrderStatus.PARTIAL;
-            orders.applyFill(resting.orderId(), tradeQty, newRestingStatus);
+            log.info(EventLog.event(EventLog.ORDER_ACCEPTED,
+                            "orderId",       orderId,
+                            "clientOrderId", cmd.clientOrderId(),
+                            "userId",        cmd.userId(),
+                            "symbol",        cmd.symbol(),
+                            "side",          cmd.side().name(),
+                            "type",          cmd.type().name(),
+                            "price",         limitPrice == null ? null : limitPrice.toPlainString(),
+                            "qty",           cmd.quantity()),
+                    "order accepted");
 
-            UUID tradeId = UUID.randomUUID();
-            UUID buyOrderId, sellOrderId, buyUserId, sellUserId;
-            if (cmd.side() == OrderSide.BUY) {
-                buyOrderId  = orderId;       sellOrderId = resting.orderId();
-                buyUserId   = cmd.userId();  sellUserId  = resting.userId();
-            } else {
-                buyOrderId  = resting.orderId(); sellOrderId = orderId;
-                buyUserId   = resting.userId();  sellUserId  = cmd.userId();
+            long incomingFilled = 0L;
+            long incomingRemaining = cmd.quantity();
+
+            while (incomingRemaining > 0) {
+                Optional<OrderRow> bestOpt = orders.selectBestOpposite(
+                        cmd.symbol(), cmd.side(), cmd.type(), limitPrice);
+                if (bestOpt.isEmpty()) {
+                    break;
+                }
+
+                OrderRow resting = bestOpt.get();
+                long tradeQty = Math.min(incomingRemaining, resting.remainingQty());
+                BigDecimal tradePrice = resting.price(); // §2.2: resting order's price wins
+
+                long newIncomingFilled = incomingFilled + tradeQty;
+                OrderStatus newIncomingStatus = newIncomingFilled == cmd.quantity()
+                        ? OrderStatus.FILLED : OrderStatus.PARTIAL;
+                orders.applyFill(orderId, tradeQty, newIncomingStatus);
+
+                long newRestingFilled = resting.filledQty() + tradeQty;
+                OrderStatus newRestingStatus = newRestingFilled == resting.quantity()
+                        ? OrderStatus.FILLED : OrderStatus.PARTIAL;
+                orders.applyFill(resting.orderId(), tradeQty, newRestingStatus);
+
+                UUID tradeId = UUID.randomUUID();
+                UUID buyOrderId, sellOrderId, buyUserId, sellUserId;
+                if (cmd.side() == OrderSide.BUY) {
+                    buyOrderId  = orderId;       sellOrderId = resting.orderId();
+                    buyUserId   = cmd.userId();  sellUserId  = resting.userId();
+                } else {
+                    buyOrderId  = resting.orderId(); sellOrderId = orderId;
+                    buyUserId   = resting.userId();  sellUserId  = cmd.userId();
+                }
+
+                trades.insertNew(tradeId, cmd.symbol(),
+                        buyOrderId, sellOrderId, buyUserId, sellUserId,
+                        tradePrice, tradeQty);
+
+                meters.counter("trades_executed_total", "symbol", cmd.symbol()).increment();
+
+                // Outbox events — minimal payloads here; Phase 7 (fan-out) will
+                // upgrade to the wire schemas the WS layer needs.
+                outbox.emit("trades:" + cmd.symbol(), tradeJson(tradeId, tradePrice, tradeQty));
+                outbox.emit("book:"   + cmd.symbol(), bookJson(cmd.symbol()));
+                outbox.emit("orders:" + cmd.userId(),     orderJson(orderId, newIncomingStatus, newIncomingFilled));
+                outbox.emit("orders:" + resting.userId(), orderJson(resting.orderId(), newRestingStatus, newRestingFilled));
+
+                log.info(EventLog.event(EventLog.TRADE_EXECUTED,
+                                "tradeId",     tradeId,
+                                "symbol",      cmd.symbol(),
+                                "price",       tradePrice.toPlainString(),
+                                "qty",         tradeQty,
+                                "buyOrderId",  buyOrderId,
+                                "sellOrderId", sellOrderId,
+                                "buyUserId",   buyUserId,
+                                "sellUserId",  sellUserId),
+                        "trade executed");
+
+                if (newIncomingStatus == OrderStatus.FILLED) {
+                    log.info(EventLog.event(EventLog.ORDER_FILLED,
+                                    "orderId", orderId,
+                                    "userId",  cmd.userId(),
+                                    "symbol",  cmd.symbol(),
+                                    "qty",     cmd.quantity()),
+                            "incoming order filled");
+                }
+                if (newRestingStatus == OrderStatus.FILLED) {
+                    log.info(EventLog.event(EventLog.ORDER_FILLED,
+                                    "orderId", resting.orderId(),
+                                    "userId",  resting.userId(),
+                                    "symbol",  cmd.symbol(),
+                                    "qty",     resting.quantity()),
+                            "resting order filled");
+                }
+
+                incomingFilled = newIncomingFilled;
+                incomingRemaining -= tradeQty;
             }
 
-            trades.insertNew(tradeId, cmd.symbol(),
-                    buyOrderId, sellOrderId, buyUserId, sellUserId,
-                    tradePrice, tradeQty);
+            if (cmd.type() == OrderType.MARKET && incomingRemaining > 0) {
+                orders.markRejected(orderId, INSUFFICIENT_LIQUIDITY);
+                outbox.emit("orders:" + cmd.userId(),
+                        orderJson(orderId, OrderStatus.CANCELLED, incomingFilled));
 
-            // Outbox events — minimal payloads here; Phase 7 (fan-out) will
-            // upgrade to the wire schemas the WS layer needs.
-            outbox.emit("trades:" + cmd.symbol(), tradeJson(tradeId, tradePrice, tradeQty));
-            outbox.emit("book:"   + cmd.symbol(), bookJson(cmd.symbol()));
-            outbox.emit("orders:" + cmd.userId(),     orderJson(orderId, newIncomingStatus, newIncomingFilled));
-            outbox.emit("orders:" + resting.userId(), orderJson(resting.orderId(), newRestingStatus, newRestingFilled));
+                meters.counter("orders_rejected_total", "reason", INSUFFICIENT_LIQUIDITY).increment();
 
-            log.info("event=TRADE_EXECUTED tradeId={} symbol={} price={} qty={} buyOrderId={} sellOrderId={}",
-                    tradeId, cmd.symbol(), tradePrice, tradeQty, buyOrderId, sellOrderId);
+                log.info(EventLog.event(EventLog.ORDER_REJECTED,
+                                "orderId", orderId,
+                                "userId",  cmd.userId(),
+                                "symbol",  cmd.symbol(),
+                                "reason",  INSUFFICIENT_LIQUIDITY,
+                                "filled",  incomingFilled),
+                        "MARKET order rejected — book ran out");
+                return new OrderResult(orderId, OrderStatus.CANCELLED,
+                        incomingFilled, INSUFFICIENT_LIQUIDITY, false);
+            }
 
-            incomingFilled = newIncomingFilled;
-            incomingRemaining -= tradeQty;
+            OrderStatus finalStatus;
+            if (incomingFilled == 0)                       finalStatus = OrderStatus.OPEN;
+            else if (incomingFilled == cmd.quantity())     finalStatus = OrderStatus.FILLED;
+            else                                           finalStatus = OrderStatus.PARTIAL;
+
+            return new OrderResult(orderId, finalStatus, incomingFilled, null, false);
+        } finally {
+            matchTimer.stop(meters.timer("match_duration_seconds", "symbol", cmd.symbol()));
         }
-
-        if (cmd.type() == OrderType.MARKET && incomingRemaining > 0) {
-            orders.markRejected(orderId, INSUFFICIENT_LIQUIDITY);
-            outbox.emit("orders:" + cmd.userId(),
-                    orderJson(orderId, OrderStatus.CANCELLED, incomingFilled));
-            log.info("event=ORDER_REJECTED orderId={} reason={} filled={}",
-                    orderId, INSUFFICIENT_LIQUIDITY, incomingFilled);
-            return new OrderResult(orderId, OrderStatus.CANCELLED,
-                    incomingFilled, INSUFFICIENT_LIQUIDITY, false);
-        }
-
-        OrderStatus finalStatus;
-        if (incomingFilled == 0)                       finalStatus = OrderStatus.OPEN;
-        else if (incomingFilled == cmd.quantity())     finalStatus = OrderStatus.FILLED;
-        else                                           finalStatus = OrderStatus.PARTIAL;
-
-        return new OrderResult(orderId, finalStatus, incomingFilled, null, false);
     }
 
     /**
@@ -183,8 +248,12 @@ public class MatchingEngineService {
         outbox.emit("orders:" + current.userId(),
                 orderJson(current.orderId(), OrderStatus.CANCELLED, current.filledQty()));
 
-        log.info("event=ORDER_CANCELLED orderId={} symbol={} userId={} filled={}",
-                cmd.orderId(), current.symbol(), current.userId(), current.filledQty());
+        log.info(EventLog.event(EventLog.ORDER_CANCELLED,
+                        "orderId", cmd.orderId(),
+                        "userId",  current.userId(),
+                        "symbol",  current.symbol(),
+                        "filled",  current.filledQty()),
+                "order cancelled");
 
         return new CancelResult(cmd.orderId(), OrderStatus.CANCELLED, current.filledQty());
     }

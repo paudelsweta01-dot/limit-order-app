@@ -38,7 +38,8 @@ management:
         include: health,info,prometheus
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: always       # OutboxListener health component visible without auth
+      show-components: always
       probes:
         enabled: true
   metrics:

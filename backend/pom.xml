@@ -110,7 +110,10 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- Metrics -->
+        <!-- Metrics: Prometheus client 1.x via Micrometer registry.
+             Pairs with Spring Boot 3.4+ which reliably auto-configures the
+             /actuator/prometheus scrape endpoint with this artifact
+             (3.3.x had a known regression here). -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>

@@ -1,5 +1,6 @@
 package com.sweta.limitorder.outbox;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -28,6 +29,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class OutboxWriter {
 
     private final JdbcTemplate jdbc;
+    private final MeterRegistry meters;
 
     /**
      * Insert one outbox event. Must be called from within an active transaction.
@@ -44,5 +46,6 @@ public class OutboxWriter {
         jdbc.update(
                 "INSERT INTO market_event_outbox (channel, payload) VALUES (?, ?::jsonb)",
                 channel, jsonPayload);
+        meters.counter("outbox_published_total").increment();
     }
 }
