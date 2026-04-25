@@ -1,7 +1,7 @@
 package com.sweta.limitorder.outbox;
 
 import com.sweta.limitorder.TestcontainersConfig;
-import com.sweta.limitorder.ws.WsBroker;
+import com.sweta.limitorder.ws.InMemoryWsBroker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,8 +31,11 @@ import static org.mockito.Mockito.verify;
 @Import(TestcontainersConfig.class)
 class OutboxListenerIntegrationTest {
 
+    // Mock the concrete type so it satisfies BookWsHandler's
+    // InMemoryWsBroker dependency too (the mock IS-A InMemoryWsBroker
+    // and IS-A WsBroker via inheritance).
     @MockBean
-    private WsBroker broker;
+    private InMemoryWsBroker broker;
 
     @Autowired
     private OutboxListener listener;
