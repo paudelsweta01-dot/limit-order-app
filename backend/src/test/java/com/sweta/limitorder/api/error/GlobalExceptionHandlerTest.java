@@ -90,6 +90,17 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void illegalArgumentReturns400ValidationFailed() {
+        ResponseEntity<ErrorResponse> response =
+                advice.handleIllegalArgument(new IllegalArgumentException("unknown symbol: ZZZZ"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().code()).isEqualTo("VALIDATION_FAILED");
+        assertThat(response.getBody().message()).isEqualTo("unknown symbol: ZZZZ");
+    }
+
+    @Test
     void unhandledReturns500WithoutLeakingStackTrace() {
         ResponseEntity<ErrorResponse> response =
                 advice.handleUnexpected(new RuntimeException("ka-boom inside the engine"));

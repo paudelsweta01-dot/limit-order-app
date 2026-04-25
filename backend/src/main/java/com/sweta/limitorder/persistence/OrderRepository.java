@@ -193,6 +193,17 @@ public class OrderRepository {
         return odt == null ? null : odt.toInstant();
     }
 
+    /**
+     * "My orders" page (architecture §6.4) — newest first, hits
+     * {@code orders_user_idx (user_id, created_at DESC)}.
+     */
+    public List<OrderRow> findByUser(UUID userId) {
+        return jdbc.query(
+                "SELECT " + SELECT_COLUMNS + " FROM orders " +
+                        "WHERE user_id = ? ORDER BY created_at DESC",
+                MAPPER, userId);
+    }
+
     /** For tests / diagnostics: paginate over all orders with a given status. */
     public List<OrderRow> findAll() {
         return jdbc.query("SELECT " + SELECT_COLUMNS + " FROM orders ORDER BY created_at", MAPPER);
