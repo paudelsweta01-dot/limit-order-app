@@ -1,0 +1,50 @@
+# --- Maven ---
+target/
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# --- IDEs ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+.metadata/
+nbproject/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs / runtime ---
+*.log
+logs/
+HELP.md
+hs_err_pid*
+
+# --- Local env / secrets ---
+.env
+.env.local
+*.local
+
+# --- Node / Angular (frontend, populated later) ---
+node_modules/
+dist/
+.angular/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Postgres / dump artefacts ---
+pgdata/
+*.sql.gz
+
+# --- Docker ---
+*.pid
