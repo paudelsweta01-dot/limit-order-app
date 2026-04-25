@@ -5,7 +5,7 @@
 **Session purpose:** Implement backend Phases 0 through 9 from [`docs/plans/backend-plan.md`](../plans/backend-plan.md), per the spec in [`docs/requirnments/limit-order-requirements.md`](../requirnments/limit-order-requirements.md), the architecture in [`docs/architecture/architecture.md`](../architecture/architecture.md), and the project standards in [`.claude/instructions.md`](../../.claude/instructions.md).
 **Outcome:** **110/110 tests green** at the end of the session. Backend is feature-complete through observability polish; the multi-instance NFR (1-second cross-node visibility) is empirically proven in `CrossNodeWsIntegrationTest`. 12 atomic backend commits + 3 docs commits.
 
-> **File-history note.** This transcript was first produced (covering Phases 0–5) at Turn 9 below; Turns 10–13 were appended later in the same session as Phases 6, 7, and 8 landed; Turns 14–15 cover Phase 9 + this final extension. The filename keeps its original `phases-0-to-5` suffix for stability of any links, but the content covers 0–9.
+> **File-history note.** This transcript was first produced (covering Phases 0–5) at Turn 9 below; Turns 10–13 were appended later in the same session as Phases 6, 7, and 8 landed; Turns 14–15 cover Phase 9 + the final extension. The file was renamed from `2026-04-25-backend-phases-0-to-5.md` → `2026-04-25-backend-phases.md` once content stabilised across all phases. User quotes in Turns 13 and 15 preserve the original filename verbatim.
 
 This transcript exists per Deliverable §8.6 of the requirements ("Agent chat history export — committed to the repo under `docs/ai-chat/`"). It is a faithful record of how each phase was produced, the decisions made, and the friction points encountered.
 
@@ -573,7 +573,7 @@ Also: a non-crossing `engine.submit(...)` doesn't fire any outbox events (the en
 
 This is the result. Turns 10, 11, 12 (Phases 6, 7, 8) and this turn were appended in place; the original Turns 1–9 stay verbatim. The header was updated to reflect the broader scope ("Phases 0–8") and the outcome (98/98 tests, 11 backend commits + 2 docs commits). Appendices A, B, C, D, E were extended below to incorporate the new commits, tests, decisions, deferred items, and friction points.
 
-The filename keeps its `phases-0-to-5` suffix to avoid breaking any references to it; the in-file title is now the source of truth on actual scope.
+At this point I kept the filename as `phases-0-to-5.md` and let the in-file title carry the actual scope; it was renamed to `phases.md` later, after Phase 9 landed.
 
 `55fa397 docs: extend transcript with phases 6–8 (read API, outbox listener, websockets)`
 
