@@ -21,9 +21,9 @@ Pre-work that doesn't ship code but unblocks everything else.
 
 | # | Task | Acceptance |
 |---|---|---|
-| 0.1 | Create `backend/` with Maven layout (`pom.xml`, `src/main/java`, `src/main/resources`, `src/test/java`). | `mvn -pl backend validate` succeeds. |
+| 0.1 | Create `backend/` with Maven layout (`pom.xml`, `src/main/java`, `src/main/resources`, `src/test/java`) plus the Maven Wrapper (`mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.properties`) co-located inside `backend/`. **No root aggregator POM** — the backend is a self-contained Maven project; `frontend/`, `simulator/`, `infra/` are also self-contained. The repo root holds only docs, the README, and per-component subdirectories. | `cd backend && ./mvnw validate` succeeds. |
 | 0.2 | Add `.gitignore` entries for `target/`, IDE files. | Commit doesn't include build artefacts. |
-| 0.3 | `pom.xml` declares Java 17, Spring Boot 3.x BOM, dependencies: web, validation, actuator, security, data-jpa, jdbc, postgresql, flyway-core, flyway-database-postgresql, micrometer-prometheus, jjwt, bcrypt (in spring-security-crypto), testcontainers (postgresql), spring-boot-starter-test, awaitility. | `mvn -pl backend dependency:tree` resolves; no version warnings. |
+| 0.3 | `backend/pom.xml` declares Java 17, Spring Boot 3.x BOM, dependencies: web, validation, actuator, security, data-jpa, jdbc, postgresql, flyway-core, flyway-database-postgresql, micrometer-prometheus, jjwt, bcrypt (in spring-security-crypto), testcontainers (postgresql), spring-boot-starter-test, awaitility. | `cd backend && ./mvnw dependency:tree` resolves; no version warnings. |
 
 ---
 
