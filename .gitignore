@@ -6,7 +6,7 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
-# --- IDEs / agents ---
+# --- IDEs ---
 .idea/
 *.iml
 *.ipr
@@ -18,7 +18,6 @@ target/
 .factorypath
 .metadata/
 nbproject/
-.claude/
 
 # --- OS ---
 .DS_Store

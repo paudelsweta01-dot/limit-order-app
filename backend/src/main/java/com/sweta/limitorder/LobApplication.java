@@ -1,4 +1,4 @@
-package com.example.lob;
+package com.sweta.limitorder;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

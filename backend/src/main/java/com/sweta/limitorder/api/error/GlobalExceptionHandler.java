@@ -1,4 +1,4 @@
-package com.example.lob.api.error;
+package com.sweta.limitorder.api.error;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,4 +1,4 @@
-package com.example.lob.config;
+package com.sweta.limitorder.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

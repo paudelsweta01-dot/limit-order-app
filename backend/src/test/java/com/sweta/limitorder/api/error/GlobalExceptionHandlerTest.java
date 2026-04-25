@@ -1,4 +1,4 @@
-package com.example.lob.api.error;
+package com.sweta.limitorder.api.error;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;

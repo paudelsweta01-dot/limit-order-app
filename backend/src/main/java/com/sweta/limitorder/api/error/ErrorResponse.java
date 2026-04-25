@@ -1,4 +1,4 @@
-package com.example.lob.api.error;
+package com.sweta.limitorder.api.error;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

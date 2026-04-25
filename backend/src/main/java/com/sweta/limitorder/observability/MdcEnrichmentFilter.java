@@ -1,4 +1,4 @@
-package com.example.lob.observability;
+package com.sweta.limitorder.observability;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;

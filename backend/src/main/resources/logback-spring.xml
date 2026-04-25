@@ -15,6 +15,6 @@
         <appender-ref ref="JSON"/>
     </root>
 
-    <logger name="com.example.lob" level="DEBUG"/>
+    <logger name="com.sweta.limitorder" level="DEBUG"/>
 
 </configuration>

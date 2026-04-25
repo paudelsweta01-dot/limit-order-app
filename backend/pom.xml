@@ -13,7 +13,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example.lob</groupId>
+    <groupId>com.sweta.limitorder</groupId>
     <artifactId>lob-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>Limit Order App — Backend</name>

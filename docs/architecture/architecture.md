@@ -97,10 +97,10 @@ Subtle case: a MARKET order that fills 60 of 100 lots and then runs out of oppos
 
 ### 4.1 Module / package layout
 
-Single Maven module — multi-module ceremony isn't worth it at this size. Logical packages inside `com.example.lob`:
+Single Maven module — multi-module ceremony isn't worth it at this size. Logical packages inside `com.sweta.limitorder`:
 
 ```
-com.example.lob
+com.sweta.limitorder
  ├── api              REST controllers, request/response DTOs, exception handlers
  ├── ws               WebSocket handlers, subscription registry, payload mappers
  ├── auth             Login controller, JWT signer/verifier, security filter

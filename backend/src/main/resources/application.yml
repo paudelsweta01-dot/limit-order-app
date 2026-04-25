@@ -56,4 +56,4 @@ app:
 logging:
   level:
     root: INFO
-    com.example.lob: DEBUG
+    com.sweta.limitorder: DEBUG
