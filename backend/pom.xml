@@ -93,10 +93,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
+        <!-- compile scope (was runtime): OutboxListener compiles against
+             PGConnection / PGNotification to consume LISTEN/NOTIFY -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
         </dependency>
 
         <!-- Migrations -->
