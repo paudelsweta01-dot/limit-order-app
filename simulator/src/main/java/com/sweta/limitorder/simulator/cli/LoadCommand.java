@@ -1,14 +1,28 @@
 package com.sweta.limitorder.simulator.cli;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.Callable;
+
+import com.sweta.limitorder.simulator.api.LobApiClient;
+import com.sweta.limitorder.simulator.api.TokenCache;
+import com.sweta.limitorder.simulator.mode.ConsistencyCheckRunner;
+import com.sweta.limitorder.simulator.mode.LoadRunner;
+import com.sweta.limitorder.simulator.mode.SeedCredentials;
+import com.sweta.limitorder.simulator.report.AssertionResult;
+import com.sweta.limitorder.simulator.report.RunReport;
 
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 
 /**
- * Plan §5 — generate the §5.5 stress profile. Phase 5 of the simulator
- * plan lands the actual workload + invariant checks.
+ * Plan §5 — load mode. Spawns N workers that submit orders at an
+ * aggregate rate for {@code --duration}, then runs the §4.3
+ * consistency-check (Phase 4) automatically (plan §5.4) unless
+ * {@code --skip-consistency-check} is set.
  */
 @Command(
         name = "load",
@@ -20,32 +34,55 @@ public class LoadCommand implements Callable<Integer> {
     @Mixin
     public CommonOptions common;
 
-    @Option(
-            names = "--users",
-            description = "Number of concurrent users (default: ${DEFAULT-VALUE}).",
-            defaultValue = "4"
-    )
+    @Option(names = "--users",     description = "Concurrent user threads (default: ${DEFAULT-VALUE}).", defaultValue = "4")
     public int users;
-
-    @Option(
-            names = "--rate",
-            description = "Target orders per second across all users (default: ${DEFAULT-VALUE}).",
-            defaultValue = "83"
-    )
+    @Option(names = "--rate",      description = "Aggregate orders/sec across all users (default: ${DEFAULT-VALUE}).", defaultValue = "83")
     public int rate;
-
-    @Option(
-            names = "--duration",
-            description = "Run duration in seconds (default: ${DEFAULT-VALUE}).",
-            defaultValue = "60"
-    )
-    public int duration;
+    @Option(names = "--duration",  description = "Run duration in seconds (default: ${DEFAULT-VALUE}).", defaultValue = "60")
+    public int durationSeconds;
+    @Option(names = "--seed",      description = "RNG seed for reproducible runs (default: ${DEFAULT-VALUE}).", defaultValue = "42")
+    public long seed;
+    @Option(names = "--credentials", description = "Optional CSV (`username,password`) for non-seed users.", paramLabel = "PATH")
+    public Path credentials;
+    @Option(names = "--skip-consistency-check",
+            description = "Skip the post-run §4.3 consistency check (default: run it).")
+    public boolean skipConsistencyCheck;
 
     @Override
-    public Integer call() {
+    public Integer call() throws IOException {
         RunContext ctx = RunContext.from(common);
-        System.err.println("load: stub — Phase 5 of the simulator plan implements the stress profile. "
-                + "(runId=" + ctx.runId + ")");
-        return 0;
+        SeedCredentials creds = credentials != null
+                ? SeedCredentials.fromCsv(credentials)
+                : SeedCredentials.defaults();
+
+        LobApiClient api = new LobApiClient(common.baseUrl);
+        TokenCache cache = new TokenCache();
+        LoadRunner load = new LoadRunner(api, cache, creds,
+                ConsistencyCheckRunner.DEFAULT_USERNAMES,
+                users, rate, Duration.ofSeconds(durationSeconds), seed);
+        RunReport report = load.run(ctx.runId);
+
+        if (!skipConsistencyCheck) {
+            ConsistencyCheckRunner check = new ConsistencyCheckRunner(api, cache, creds);
+            RunReport checkReport = check.run(ctx.runId);
+            // Plan §5.4: surface the consistency assertions in the load report
+            // so a single exit code covers both halves.
+            report.assertions.addAll(checkReport.assertions);
+            report.tradesObserved += checkReport.tradesObserved;
+        }
+
+        System.out.println("load run " + ctx.runId);
+        System.out.printf("  duration:        %s%n", report.duration());
+        System.out.printf("  submitted:       %d%n", report.submitted);
+        System.out.printf("  accepted:        %d%n", report.accepted);
+        System.out.printf("  rejected:        %d%n", report.rejected);
+        System.out.printf("  trades observed: %d%n", report.tradesObserved);
+        System.out.println("  invariants:");
+        for (AssertionResult a : report.assertions) {
+            System.out.printf("    [%s] %s%n", a.passed() ? "PASS" : "FAIL", a.name());
+            for (String d : a.diffs()) System.out.println("      " + d);
+        }
+
+        return report.allAssertionsPassed() ? 0 : 1;
     }
 }
