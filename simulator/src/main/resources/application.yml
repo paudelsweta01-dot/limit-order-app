@@ -1,0 +1,17 @@
+# Spring Boot config for the simulator CLI.
+# Banner suppressed and Spring's own startup chatter dialled down so
+# `--help` output is clean (picocli prints, then we exit).
+
+spring:
+  main:
+    banner-mode: off
+    log-startup-info: false
+  application:
+    name: simulator
+
+logging:
+  level:
+    root: WARN
+    com.sweta.limitorder.simulator: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%logger{36}] %msg%n"
