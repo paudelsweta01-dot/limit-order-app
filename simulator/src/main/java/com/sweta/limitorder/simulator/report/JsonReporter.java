@@ -35,7 +35,15 @@ public final class JsonReporter {
 
     /** Write {@code report} as pretty-printed JSON to {@code path}. */
     public static void write(RunReport report, Path path) throws IOException {
-        if (path.getParent() != null) Files.createDirectories(path.getParent());
+        Path parent = path.getParent();
+        if (parent != null && !Files.isDirectory(parent)) {
+            // `Files.createDirectories` chokes on macOS' /tmp symlink
+            // (rejects intermediate components that already exist as
+            // symlinks); guarding with isDirectory short-circuits the
+            // common "parent already exists" case while still creating
+            // fresh dirs for nested paths.
+            Files.createDirectories(parent);
+        }
         Files.writeString(path, toJson(report));
     }
 

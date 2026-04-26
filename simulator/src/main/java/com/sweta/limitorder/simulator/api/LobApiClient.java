@@ -89,12 +89,15 @@ public class LobApiClient {
         return getList("/api/symbols", auth, new TypeReference<List<SymbolResponse>>() {});
     }
 
-    public BookSnapshot getBook(String symbol) {
-        return get("/api/book/" + encode(symbol), null, BookSnapshot.class);
+    public BookSnapshot getBook(String symbol, JwtToken auth) {
+        // Backend requires auth on /api/book/{symbol} (architecture
+        // §4.9 — SecurityConfig only permitAlls /api/auth/login,
+        // /actuator/health, and /actuator/prometheus).
+        return get("/api/book/" + encode(symbol), auth, BookSnapshot.class);
     }
 
-    public BookTotals getTotals(String symbol) {
-        return get("/api/book/" + encode(symbol) + "/totals", null, BookTotals.class);
+    public BookTotals getTotals(String symbol, JwtToken auth) {
+        return get("/api/book/" + encode(symbol) + "/totals", auth, BookTotals.class);
     }
 
     public SubmitOrderResponse submit(SubmitOrderRequest request, JwtToken auth) {

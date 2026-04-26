@@ -123,12 +123,25 @@ public class ScenarioRunner {
             if (!name.startsWith("_")) symbols.add(name); // skip _doc / _comment
         });
 
+        // Backend requires auth on /api/book/{symbol}; pick any submitter
+        // from the CSV to source a JWT (TokenCache already has it cached
+        // from the submission loop above).
+        String reader = rows.isEmpty() ? "u1" : rows.get(0).userId();
+        JwtToken token;
+        try {
+            token = tokens.getOrLogin(reader, creds.passwordFor(reader), api);
+        } catch (LobApiException e) {
+            report.addAssertion(AssertionResult.fail("book:read-auth",
+                    List.of("failed to log in as " + reader + " for book reads: " + e.getMessage())));
+            return;
+        }
+
         for (String symbol : symbols) {
             JsonNode expectedSym = expected.get(symbol);
             if (expectedSym == null) continue; // symbol not asserted
             BookSnapshot actual;
             try {
-                actual = api.getBook(symbol);
+                actual = api.getBook(symbol, token);
             } catch (LobApiException e) {
                 report.addAssertion(AssertionResult.fail("book:" + symbol,
                         List.of("getBook(" + symbol + ") failed: " + e.getMessage())));
@@ -150,12 +163,26 @@ public class ScenarioRunner {
         for (int i = 0; i < n; i++) {
             JsonNode expectedLevel = i < expectedArr.size() ? expectedArr.get(i) : null;
             BookLevel actualLevel = i < actualLevels.size() ? actualLevels.get(i) : null;
-            String exp = renderExpected(expectedLevel);
-            String got = renderActual(actualLevel);
-            if (!exp.equals(got)) {
-                diffs.add(symbol + "." + side + "[" + i + "]: expected " + exp + ", got " + got);
+            if (!equal(expectedLevel, actualLevel)) {
+                diffs.add(symbol + "." + side + "[" + i + "]: expected "
+                        + renderExpected(expectedLevel) + ", got " + renderActual(actualLevel));
             }
         }
+    }
+
+    /**
+     * Numeric equality on price (compareTo ignores scale; backend
+     * returns NUMERIC(12,4) so {@code 180.0000} must compare equal to
+     * the expected fixture's {@code 180.00}). Long equality on qty
+     * and userCount.
+     */
+    private static boolean equal(JsonNode expectedLevel, BookLevel actualLevel) {
+        if (expectedLevel == null && actualLevel == null) return true;
+        if (expectedLevel == null || actualLevel == null) return false;
+        BigDecimal expectedPrice = new BigDecimal(expectedLevel.get("price").asText());
+        if (expectedPrice.compareTo(actualLevel.price()) != 0) return false;
+        if (expectedLevel.get("qty").asLong() != actualLevel.qty()) return false;
+        return expectedLevel.get("userCount").asInt() == actualLevel.userCount();
     }
 
     private static String renderExpected(JsonNode lvl) {

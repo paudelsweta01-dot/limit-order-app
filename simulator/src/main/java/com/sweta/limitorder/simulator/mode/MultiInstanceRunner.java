@@ -192,12 +192,23 @@ public class MultiInstanceRunner {
     // ---------- post-run book equality ----------
 
     private AssertionResult checkBooksConverge(List<String> symbols) {
+        // Each node enforces auth on /api/book — log in once on each.
+        String reader = usernames.get(0);
+        JwtToken tokenA, tokenB;
+        try {
+            tokenA = nodeA.login(reader, creds.passwordFor(reader));
+            tokenB = nodeB.login(reader, creds.passwordFor(reader));
+        } catch (LobApiException e) {
+            return AssertionResult.fail("books-equal-across-nodes",
+                    List.of("failed to obtain reader tokens: " + e.getMessage()));
+        }
+
         List<String> diffs = new ArrayList<>();
         for (String symbol : symbols) {
             BookSnapshot a, b;
             try {
-                a = nodeA.getBook(symbol);
-                b = nodeB.getBook(symbol);
+                a = nodeA.getBook(symbol, tokenA);
+                b = nodeB.getBook(symbol, tokenB);
             } catch (LobApiException e) {
                 diffs.add(symbol + ": failed to fetch book on one side: " + e.getMessage());
                 continue;

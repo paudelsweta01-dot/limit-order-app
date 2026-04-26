@@ -146,6 +146,24 @@ public class ConsistencyCheckRunner {
 
         List<String> diffs = new ArrayList<>();
         byTradeId.forEach((tradeId, entries) -> {
+            // Self-trades (architecture §9.7 known gap — prevention is
+            // deferred) appear as a single fill row for the owning user
+            // because /api/fills/mine joins trades→users and dedupes.
+            // Recognise them by counterparty == owner and let them
+            // through; they still satisfy "trade references a
+            // counter-party order on the opposite side" — the
+            // counter-party order just happens to be owned by the
+            // same user.
+            if (entries.size() == 1) {
+                UserFill only = entries.get(0);
+                if (only.fill.counterparty().equals(only.user)) {
+                    return; // self-trade — pass
+                }
+                diffs.add("trade " + tradeId + ": expected exactly 2 fills (1 BUY + 1 SELL), "
+                        + "got 1 (counterparty=" + only.fill.counterparty()
+                        + " on " + only.user + "'s account — neither matches a self-trade)");
+                return;
+            }
             if (entries.size() != 2) {
                 diffs.add("trade " + tradeId + ": expected exactly 2 fills (1 BUY + 1 SELL), "
                         + "got " + entries.size());

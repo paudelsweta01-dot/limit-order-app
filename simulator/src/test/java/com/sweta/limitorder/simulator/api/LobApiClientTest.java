@@ -75,7 +75,7 @@ class LobApiClientTest {
                         .withBody("""
                                 {"symbol":"AAPL","bids":[],"asks":[],"cursor":42}
                                 """)));
-        var book = api.getBook("AAPL");
+        var book = api.getBook("AAPL", token);
         assertThat(book.symbol()).isEqualTo("AAPL");
         assertThat(book.cursor()).isEqualTo(42);
     }
@@ -158,7 +158,7 @@ class LobApiClientTest {
                 .willReturn(aResponse().withStatus(502)
                         .withHeader("Content-Type", "text/html")
                         .withBody("<html><body>502 Bad Gateway</body></html>")));
-        assertThatThrownBy(() -> api.getBook("AAPL"))
+        assertThatThrownBy(() -> api.getBook("AAPL", token))
                 .isInstanceOfSatisfying(LobApiException.class, e -> {
                     assertThat(e.status()).isEqualTo(502);
                     assertThat(e.envelope()).isNull(); // not a §4.11 envelope
