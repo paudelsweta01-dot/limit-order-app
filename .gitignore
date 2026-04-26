@@ -33,6 +33,9 @@ hs_err_pid*
 .env
 .env.local
 *.local
+# `.env.example` is the committed template; defensive allowlist in case
+# the rule above ever changes to a `.env*` glob.
+!.env.example
 
 # --- Node / Angular (frontend, populated later) ---
 node_modules/

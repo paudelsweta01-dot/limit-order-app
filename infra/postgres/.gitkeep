@@ -1,0 +1,4 @@
+# Phase 4 lands `00-init.sql` here (mounted at
+# /docker-entrypoint-initdb.d/00-init.sql). Schema is owned by Flyway
+# in the backend; this file only sets timezone to UTC. Letting initdb
+# create tables would conflict with Flyway's migration history.

@@ -1,0 +1,10 @@
+# Top-level compose for the multi-instance limit-order stack.
+#
+# Phase 0 commits a stub so `docker compose config` validates; Phase 5
+# populates the real services (postgres, backend-1, backend-2, nginx,
+# frontend) per `docs/plans/infra-plan.md`. Port assignments are
+# documented in `infra/README.md`.
+
+name: lob
+
+services: {}

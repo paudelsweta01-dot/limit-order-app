@@ -1,0 +1,3 @@
+# Phase 3 lands `nginx.conf` here — the API + WebSocket reverse proxy /
+# load balancer. Round-robin across `backend-1` and `backend-2`; explicit
+# WebSocket Upgrade headers; access-log format includes `$upstream_addr`.
