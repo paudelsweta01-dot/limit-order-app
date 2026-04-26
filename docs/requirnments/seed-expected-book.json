@@ -1,0 +1,36 @@
+{
+  "_doc": "Expected per-symbol top-of-book after replaying seed.csv. Mirrors §5.4 of limit-order-requirements.md. Used by `simulator scenario --expect=…` to assert the matching engine produced the right state.",
+
+  "AAPL": {
+    "bids": [
+      { "price": "180.00", "qty": 50,  "userCount": 1 }
+    ],
+    "asks": [
+      { "price": "180.50", "qty": 80,  "userCount": 1 },
+      { "price": "181.00", "qty": 100, "userCount": 1 },
+      { "price": "182.00", "qty": 150, "userCount": 1 }
+    ]
+  },
+  "MSFT": {
+    "bids": [],
+    "asks": [
+      { "price": "421.00", "qty": 30, "userCount": 1 }
+    ]
+  },
+  "TSLA": {
+    "bids": [],
+    "asks": [
+      { "price": "239.00", "qty": 100, "userCount": 1 }
+    ]
+  },
+  "GOOGL": {
+    "bids": [],
+    "asks": [
+      { "price": "155.25", "qty": 300, "userCount": 1 }
+    ]
+  },
+  "AMZN": {
+    "bids": [],
+    "asks": []
+  }
+}
