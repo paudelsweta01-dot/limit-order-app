@@ -1,22 +1,26 @@
 package com.sweta.limitorder.simulator.cli;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.Callable;
+
+import com.sweta.limitorder.simulator.api.LobApiClient;
+import com.sweta.limitorder.simulator.api.TokenCache;
+import com.sweta.limitorder.simulator.mode.ConsistencyCheckRunner;
+import com.sweta.limitorder.simulator.mode.SeedCredentials;
+import com.sweta.limitorder.simulator.report.AssertionResult;
+import com.sweta.limitorder.simulator.report.RunReport;
 
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
+import picocli.CommandLine.Option;
 
 /**
- * Plan §4 — assert the architecture §4.3 invariants against whatever
- * state currently exists in the backend (e.g. after a load run). Phase
- * 4 of the simulator plan lands the actual checks:
- * <ul>
- *   <li>Σ filled_qty(BUY) == Σ filled_qty(SELL) per symbol</li>
- *   <li>0 ≤ filled_qty ≤ quantity per order</li>
- *   <li>every trade references valid opposite-side orders</li>
- * </ul>
- *
- * <p>Exit 1 if any invariant is violated; exit 0 otherwise — that's
- * the contract that lets CI gate on it.
+ * Plan §4 — verify the architecture §4.3 invariants against whatever
+ * state currently exists in the backend (e.g. after a load run).
+ * Exit 1 on any invariant violation, 0 otherwise — the contract that
+ * lets CI gate on it.
  */
 @Command(
         name = "consistency-check",
@@ -28,11 +32,44 @@ public class ConsistencyCheckCommand implements Callable<Integer> {
     @Mixin
     public CommonOptions common;
 
+    @Option(
+            names = "--users",
+            description = "Comma-separated usernames to walk (default: u1,u2,u3,u4 — the seed users).",
+            paramLabel = "USERNAMES",
+            split = ","
+    )
+    public List<String> users;
+
+    @Option(
+            names = "--credentials",
+            description = "Optional CSV (`username,password`) for non-seed users.",
+            paramLabel = "PATH"
+    )
+    public Path credentials;
+
     @Override
-    public Integer call() {
+    public Integer call() throws IOException {
         RunContext ctx = RunContext.from(common);
-        System.err.println("consistency-check: stub — Phase 4 of the simulator plan implements the invariant checks. "
-                + "(runId=" + ctx.runId + ")");
-        return 0;
+        SeedCredentials creds = credentials != null
+                ? SeedCredentials.fromCsv(credentials)
+                : SeedCredentials.defaults();
+        List<String> usernames = users != null && !users.isEmpty()
+                ? users
+                : ConsistencyCheckRunner.DEFAULT_USERNAMES;
+
+        LobApiClient api = new LobApiClient(common.baseUrl);
+        ConsistencyCheckRunner runner = new ConsistencyCheckRunner(api, new TokenCache(), creds, usernames);
+        RunReport report = runner.run(ctx.runId);
+
+        System.out.println("consistency-check run " + ctx.runId);
+        System.out.printf("  duration:        %s%n", report.duration());
+        System.out.printf("  trades observed: %d%n", report.tradesObserved);
+        System.out.println("  invariants:");
+        for (AssertionResult a : report.assertions) {
+            System.out.printf("    [%s] %s%n", a.passed() ? "PASS" : "FAIL", a.name());
+            for (String d : a.diffs()) System.out.println("      " + d);
+        }
+
+        return report.allAssertionsPassed() ? 0 : 1;
     }
 }

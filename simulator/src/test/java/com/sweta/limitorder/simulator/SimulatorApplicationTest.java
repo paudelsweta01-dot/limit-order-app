@@ -94,12 +94,15 @@ class SimulatorApplicationTest {
     }
 
     @Test
-    void stubSubcommandRunReturnsZero_noAssertionsToCheck() {
-        // Phase 1 stubs print "stub — Phase X" and exit 0 because they
-        // have no assertions to evaluate. Phase 3+ overrides this with
-        // real exit-code semantics.
-        int exitCode = runForExit("consistency-check", "--baseUrl=http://localhost");
-        assertThat(exitCode).isEqualTo(0);
+    void consistencyCheckAgainstUnreachableBackendExits1_assertionFailure() {
+        // Phase 4 wired the real ConsistencyCheckRunner. With nothing
+        // listening on `http://localhost:1` (unreachable port), every
+        // walk:uX assertion fails → exit 1 per plan §1.3 ("assertion
+        // failed"). The earlier stub-version of this test asserted
+        // exit 0 (no assertions to fail); the runner's existence now
+        // changes the contract.
+        int exitCode = runForExit("consistency-check", "--baseUrl=http://localhost:1");
+        assertThat(exitCode).isEqualTo(1);
     }
 
     // ---------- helpers ----------
