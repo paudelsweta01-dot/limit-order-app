@@ -1,0 +1,65 @@
+# Plan §7.1 — minimal compose for the local-dev loop.
+#
+# Brings up just Postgres (no backend, no nginx, no frontend) so a
+# developer can:
+#   * run the backend from IntelliJ on :8080 (and a second on :8081
+#     if they want to exercise the multi-instance path locally
+#     without rebuilding container images on every change)
+#   * point Angular's `ng serve` proxy.conf.json at localhost:8080
+#     for the live SPA
+#   * run the simulator's WireMock-backed unit tests against a real
+#     Flyway-migrated DB without compose ceremony
+#
+# Reuses the same `infra/postgres/00-init.sql` initdb script and
+# tunings as the full stack (max_connections=200, shared_buffers=
+# 256MB) so the dev loop and prod-shape composition agree on
+# Postgres behaviour.
+#
+# Usage:
+#   docker compose -f infra/dev/postgres-only.compose.yml up -d
+#   # …iterate…
+#   docker compose -f infra/dev/postgres-only.compose.yml down
+#
+# The Flyway migrations themselves run when the backend starts (it
+# owns the schema), so a one-shot Flyway runner is unnecessary —
+# starting the backend from IntelliJ migrates against this Postgres
+# the same way the in-compose backend does.
+
+name: lob-dev
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lob}
+      POSTGRES_USER: ${POSTGRES_USER:-lob}
+      # Default to a known-weak password so the dev flow doesn't
+      # require a `.env` file. The `:?` guard is deliberately omitted
+      # here (vs the prod compose) — this is loopback-only on a
+      # developer laptop, not exposed externally.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lob}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Separate volume from the main `lob_pgdata` so the dev loop and
+      # the full stack don't fight over schema state — switching
+      # between them is a clean swap, not a data corruption risk.
+      - lob-dev-pgdata:/var/lib/postgresql/data
+      - ../../infra/postgres/00-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lob} -d ${POSTGRES_DB:-lob}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  lob-dev-pgdata:
