@@ -146,3 +146,13 @@ export interface BookUpdateEvent {
 // Deltas on /ws/book/{symbol} are either a BookUpdateEvent or TradeEvent
 // depending on the channel. We keep the discriminator on `payload.event`
 // for runtime narrowing.
+
+// Service-facing event unions. WsService translates raw WS frames into
+// these so consumers (Phases 4/5/6) don't need to parse the envelope.
+export type BookStreamEvent =
+  | { readonly kind: 'snapshot'; readonly data: BookSnapshot }
+  | { readonly kind: 'delta';    readonly data: BookUpdateEvent | TradeEvent };
+
+export type OrdersStreamEvent =
+  | { readonly kind: 'snapshot'; readonly data: readonly MyOrder[] }
+  | { readonly kind: 'delta';    readonly data: OrderEvent };
