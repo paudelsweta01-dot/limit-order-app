@@ -1,0 +1,15 @@
+# Trim the build context so `docker build frontend/` doesn't ship the
+# 200+ MB node_modules tree to the daemon — `npm ci` reinstalls inside
+# the container anyway.
+
+node_modules/
+dist/
+.angular/
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.env
+.env.local
