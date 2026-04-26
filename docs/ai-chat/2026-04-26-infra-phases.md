@@ -1,11 +1,11 @@
-# AI Coding Assistant — Infrastructure Implementation Session (Phases 0–5)
+# AI Coding Assistant — Infrastructure Implementation Session (Phases 0–8)
 
 **Date:** 2026-04-26
 **Participants:** Sweta Paudel (engineer) and Claude (AI coding assistant)
-**Session purpose:** Implement infrastructure Phases 0 through 5 from [`docs/plans/infra-plan.md`](../plans/infra-plan.md), per the spec in [`docs/requirnments/limit-order-requirements.md`](../requirnments/limit-order-requirements.md), the architecture in [`docs/architecture/architecture.md`](../architecture/architecture.md), and the project standards in [`.claude/instructions.md`](../../.claude/instructions.md).
-**Outcome:** **Full multi-instance stack runs end-to-end via `docker compose up --build`.** Five services all healthy: postgres + two backends + nginx LB + frontend. Verified in this session: LB round-robin (no sticky sessions; alternating `172.18.0.4 ↔ 172.18.0.3` over 10 successive `/actuator/health` probes), end-to-end auth (login as seed user `u1` → JWT → `GET /api/symbols` → `POST /api/orders` → `OPEN`), SPA shell on `:4200`, postgres persistence across `down`/`up`. 6 atomic infra commits.
+**Session purpose:** Implement infrastructure Phases 0 through 8 from [`docs/plans/infra-plan.md`](../plans/infra-plan.md), per the spec in [`docs/requirnments/limit-order-requirements.md`](../requirnments/limit-order-requirements.md), the architecture in [`docs/architecture/architecture.md`](../architecture/architecture.md), and the project standards in [`.claude/instructions.md`](../../.claude/instructions.md).
+**Outcome:** **Full multi-instance stack runs end-to-end via `docker compose up --build` and is reviewer-runnable from the top-level README.** Phases 0–5 produced the stack (postgres + 2 backends + nginx LB + frontend, all healthy). Phase 6 ran the live smoke (cold-start, manual curl, simulator scenario, simulator multi-instance, kill-resilience, persistence) — five of six checks fully green; one partial (`docker kill` + `restart: unless-stopped` is finicky on Docker Desktop / macOS). Phase 7.1 lands a no-compose dev mode (`infra/dev/postgres-only.compose.yml`); Phase 7.2 + Phase 8 land the top-level `README.md` and `infra/SMOKE_LOG.md`. Phase 9 (hardening — TLS / rate-limits / cpu+mem caps / `pg_dump` script) is plan-marked optional and explicitly deferred per "skip if time is tight, document as deferred". 8 atomic infra commits.
 
-> **File-history note.** This transcript covers Phases 0–5 — the code-producing infra phases. Phase 6 (smoke verification — a procedural checklist) and Phase 8 (README documentation) remain. Phase 7 (no-compose dev mode) and Phase 9 (hardening) are flagged as optional in the plan. The filename keeps the `-0-to-5` suffix until those land, mirroring the backend transcript's `-0-to-5 → final` rename pattern.
+> **File-history note.** This transcript was first produced (covering Phases 0–5) at the end of the code-producing sub-session (commit `dc26b43`); Turn 8 was appended later in the same day under a single "Finish up the remaining infra phases" directive that drove Phases 6, 7, and 8. The file was renamed from `2026-04-26-infra-phases-0-to-5.md` → `2026-04-26-infra-phases.md` once content stabilised across all eight infra phases — same convention the backend (`-0-to-5 → final`) and frontend (`-0-to-3 → final`) transcripts established. The infra Phase 6 smoke also surfaced four simulator-side bugs which were retroactively fixed; the simulator transcript records that follow-up at its own Turn 9.
 
 This transcript exists per Deliverable §8.6 of the requirements ("Agent chat history export — committed to the repo under `docs/ai-chat/`"). It is a faithful record of how each phase was produced, the decisions made, and the friction points encountered.
 
@@ -327,9 +327,91 @@ The user's response (this turn): "let's go with option a but before that format 
 
 ---
 
+## Turn 8 — Infra Phases 6, 7, 8 (live smoke + dev mode + README)
+
+### User
+
+> Finish up the remaining infra phases.
+
+### Assistant
+
+#### Plan
+
+Three remaining code-producing phases under one directive. Order chosen for risk-reduction:
+
+1. **Phase 7.1 first** — small artifact (`infra/dev/postgres-only.compose.yml`); validate via `docker compose config`.
+2. **Phase 6 next** — actually drive the live smoke against the running stack. If anything breaks, this surfaces it before the README documents what works.
+3. **Phase 8 last** — top-level `README.md` informed by what actually worked in Phase 6.
+4. **Phase 9 deferred** — plan-marked optional ("Skip if time is tight; document as deferred"). Captured in the README's "Known deferred items" section.
+
+This deviates from the plan's literal `0 → 1 → 6.1 sanity → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9` order (per the same opportunistic risk-reduction reasoning that drove the Phase 4-before-2/3 pivot earlier in this session).
+
+#### Phase 7.1 — `infra/dev/postgres-only.compose.yml`
+
+Minimal compose for the local-dev loop: just Postgres (no backend, no nginx, no frontend) so a developer can run the backend from IntelliJ on `:8080` (and a second on `:8081` for multi-instance work) without rebuilding container images on every change. Reuses the same `infra/postgres/00-init.sql` initdb script and tunings (`max_connections=200`, `shared_buffers=256MB`) as the full stack.
+
+- Project name `lob-dev` and named volume `lob-dev-pgdata` — separate from the main `lob_pgdata` so the dev loop and the full stack can't fight over schema state.
+- `POSTGRES_PASSWORD` defaults to `lob` (loopback-only on a developer laptop, not exposed externally), vs the prod compose's `:?` fail-fast.
+
+`docker compose -f infra/dev/postgres-only.compose.yml config` validates clean.
+
+#### Phase 6 — Live smoke verification
+
+Captured in [`infra/SMOKE_LOG.md`](../../infra/SMOKE_LOG.md) (committed alongside this turn). Summary per plan §6.1–§6.6:
+
+| § | Result | Notes |
+|---|---|---|
+| 6.1 cold-start | ✅ | 57 s with `--build` (rebuilds backend+frontend); <25 s without. Plan target ~30 s |
+| 6.2 manual smoke | ✅ | `/actuator/health` UP including `outboxListener:thread=alive`; `/4200` 200; `/api/symbols` requires auth (plan wording assumed permitAll — backend protects it; the smoke log corrects the curl flow) |
+| 6.3 scenario mode | ✅ | All five §5.4 symbol assertions PASS after the simulator follow-up fixes (see below) |
+| 6.4 multi-instance | ✅ | `books-equal-across-nodes` + all three §4.3 invariants PASS |
+| 6.5 kill resilience | ⚠️ | LB failover ✅ during `docker kill lob-backend-1`; `restart: unless-stopped` ⚠️ doesn't reliably auto-restart on Docker Desktop / macOS for SIGKILL. Manual recovery: `docker compose start <service>`. Plan §6.5 expected automatic restart "within ~5 s"; documented as a Docker Desktop quirk |
+| 6.6 persistence | ✅ | `down` (no `-v`) preserves the named volume; `up` recovers full state (45 orders + 18 trades from a prior load run) |
+
+#### Bugs surfaced by Phase 6 smoke (and fixed)
+
+The first scenario run against the live stack failed in five places — `[FAIL] book:* — getBook(X) failed: authentication required`. Three real simulator-side bugs and one backend-edge scenario surfaced; commit `1876716` retroactively fixed them (recorded as Turn 9 of the simulator transcript):
+
+1. **`LobApiClient.getBook(String)` and `getTotals(String)` didn't take a `JwtToken`** — but the backend requires auth on `/api/book/{symbol}`. WireMock unit tests didn't enforce auth so the bug slipped through. Both methods now take `JwtToken auth`; `ScenarioRunner.assertBookMatches` and `MultiInstanceRunner.checkBooksConverge` log in once and reuse the token.
+
+2. **`JsonReporter.write` crashed on `--report=/tmp/run.json`** with `FileAlreadyExistsException: /tmp`. `Files.createDirectories` on macOS chokes on `/tmp`'s symlink to `/private/tmp` even when `/tmp` exists. Fix: `if (parent != null && !Files.isDirectory(parent))` guard.
+
+3. **Book comparator used `BigDecimal.toPlainString().equals(...)`** — backend returns `NUMERIC(12,4)` (`"180.0000"`), expected JSON has 2 dp (`"180.00"`). Same number, different string. Fix: `BigDecimal.compareTo` for price equality.
+
+4. **`trade-counterparts` invariant flagged self-trades** as violations. Confirmed via `psql -c "SELECT … WHERE buyer.user_id = seller.user_id"`. Architecture §9.7 explicitly defers self-trade prevention; the simulator should treat them as valid (the trade does reference an opposite-side order; both sides happen to be the same user). Fix: recognise `counterparty == owner` on a single-fill trade as a self-trade.
+
+The simulator's 59/59 unit tests stayed green after the fix because the WireMock layer hadn't exercised any of these failure paths in the first place. Plan-acceptance "live smoke against the compose stack" did real work — caught four bugs the wiremock layer couldn't.
+
+#### Phase 8 — Top-level `README.md`
+
+Reviewer's first stop. Sections:
+
+- **How to run** — copy-pasteable `cp .env.example .env && docker compose up --build`. Five seed-user credentials (u1/alice123 .. u4/diana123). Endpoint table. SPA URL.
+- **Smoke against the running stack** — the simulator scenario invocation that cross-references `docs/requirnments/seed.csv` + `seed-expected-book.json`.
+- **Local-dev (no full compose)** — points at `infra/dev/`.
+- **Architecture** — the §1 ASCII diagram (architecture §1) + per-component summary.
+- **Concurrency strategy** (~250 words) — the three correctness gates (per-symbol advisory lock, outbox + LISTEN/NOTIFY for cross-node fan-out, UNIQUE-constraint idempotency). Maps to NFR §3.
+- **Trade-offs** (~280 words) — Postgres LISTEN over Kafka, JdbcTemplate over JPA on the engine path, no sticky sessions, raw WS over STOMP, sessionStorage JWT, `/actuator/prometheus` deferred.
+- **Known deferred items** — self-trade prevention, prometheus, auto-restart on docker kill, Phase 9 hardening, uuidv7 in browsers.
+- **Repository layout** + **Tests** block (110 backend / 118 frontend / 59 simulator).
+
+Two atomic commits:
+
+```
+1876716 simulator: follow-up fixes from infra phase 6 smoke
+ef05053 infra: phases 6+7+8 — smoke verification, dev mode, README
+```
+
+Phase 9 (hardening) explicitly deferred. The deferral is documented in the README's "Known deferred items" section: TLS via mkcert, rate-limit on `/api/auth/login`, compose `cpu_limits` / `mem_limits`, `pg_dump` backup script. All four are plan-marked "Skip if time is tight; document as deferred".
+
+---
+
 ## Appendix A — Final commit log (this session)
 
 ```
+ef05053 infra: phases 6+7+8 — smoke verification, dev mode, README
+1876716 simulator: follow-up fixes from infra phase 6 smoke      ← caught by §6.3 live smoke
+dc26b43 docs: add 2026-04-26 infrastructure implementation transcript (phases 0–5)
 00bfb48 infra: phase 5 — full compose stack (postgres + 2 backends + nginx + frontend)
 3a3c12e infra: phase 3 — nginx LB config (round-robin, WS upgrade, 16k cap)
 9c2ddae infra: phase 2 — frontend Dockerfile (multi-stage, SPA routing, gzip)
@@ -338,7 +420,11 @@ cf90de1 infra: phase 1 — backend Dockerfile (multi-stage, non-root, healthchec
 a0abebd infra: phase 0 — layout, .env.example, port assignments
 ```
 
-Six atomic commits. Build order: 0 → 1 → 4 → 2 → 3 → 5 (per the user's option-b pivot at Turn 3 above; deviates from the plan's literal order but lands at the same final state).
+Eight atomic infra commits. Build orders:
+- Phases 0–5: `0 → 1 → 4 → 2 → 3 → 5` (per the user's option-b pivot at Turn 3 above; deviates from the plan's literal order but lands at the same final state).
+- Phases 6–8 (this session's Turn 8): `7.1 → 6 → 8` (small artifact first, then live smoke, then README informed by what worked). Phase 9 (hardening) explicitly deferred per plan.
+
+The `1876716` simulator follow-up commit lives in the simulator's transcript Turn 9 but is referenced here because infra Phase 6's live smoke is what surfaced the bugs.
 
 ## Appendix B — Architectural decisions captured
 
@@ -367,21 +453,29 @@ Six atomic commits. Build order: 0 → 1 → 4 → 2 → 3 → 5 (per the user's
 | `container_name: lob-backend-{1,2}` (vs scaled replicas) | Plan §6.5's `docker kill lob-backend-1` example works literally; we never want to scale these services | 5 |
 | `restart: on-failure` for frontend (vs `unless-stopped`) | Static content; only restart if the process actually crashed | 5 |
 | Backends not externally exposed | Forces every request to traverse the LB → multi-instance design is exercised on every call | 5 |
+| Dev compose at `infra/dev/postgres-only.compose.yml` (vs at the repo root) | Keeps the root `docker-compose.yml` as the canonical "the whole stack" file; the dev-mode variant is opt-in by explicit `-f path/to.yml` | 7 |
+| Dev compose uses a separate volume `lob-dev-pgdata` | Prevents the dev loop and full stack from fighting over schema state — switching between them is a clean swap, not a corruption risk | 7 |
+| Dev compose POSTGRES_PASSWORD defaults to `lob` (no `:?`) | Loopback-only on a developer laptop, not exposed externally; the prod compose's fail-fast `:?` is appropriate there but ergonomic friction here | 7 |
+| Phase 6 build order: 7.1 → 6 → 8 (vs plan's 6 → 7 → 8) | Risk-reduction: Phase 7.1 is a tiny new artifact with self-contained validation; Phase 6 is the high-risk live smoke that might surface bugs; Phase 8 (README) documents what actually worked. Same opportunistic sequencing the Phase-4-before-2/3 pivot used | 6 (this turn) |
+| Smoke results captured as `infra/SMOKE_LOG.md` | Permanent record of what Phase 6 actually produced, including the 4 bugs surfaced and the kill-resilience caveat. Reviewers see "we ran it, here's what we got" not "we wrote it, please trust" | 6 |
+| README "Known deferred items" enumerates Phase 9 + the auto-restart caveat + prometheus + self-trade prevention | One reviewer-facing list for "things we know aren't done" — easier to evaluate than spelunking through the architecture doc | 8 |
 
 ## Appendix C — Deferred items
 
 | Deferred | Why | Owner phase |
 |---|---|---|
-| Phase 6 manual smoke (full plan §6.2/§6.5/§6.6 checklist) | LB rotation, auth flow, persistence are already proven (Phase 4 + 5 verifications above). The kill-test (§6.5) needs an active load — natural pairing with the simulator | Phase 6 / simulator |
-| Phase 6.3 simulator scenario run | Needs the simulator to exist; that's the next pivot per the plan's suggested order | Simulator phase + Phase 6 |
-| Phase 7 no-compose dev mode (`infra/dev/postgres-only.compose.yml`) | Useful for tight backend-test loops but not on the path to "stack works for review" | Phase 7 |
-| Phase 8 README deliverables (§8.1–8.5) | Architecture diagram, concurrency strategy, trade-offs sections — distilled from `architecture.md`. Editorial work, not infra | Phase 8 |
-| Phase 9 hardening (TLS, rate-limits, cpu/mem caps, pg_dump) | Plan flags as optional; skipped per "skip if time is tight" | Phase 9 (optional) |
-| Backend healthcheck `start_period: 30s` | Tight on a slow laptop; would bump to 60 s if Phase 6 cold-start observations show probe failures during initial Spring boot | Phase 6 if needed |
-| `/actuator/prometheus` exposure | The backend transcript flagged this as broken in the Spring Boot 3.3.5 / Prometheus 1.x combo. Frontend doesn't talk to `/actuator` directly so nothing infra-side to do; backend follow-up | Backend follow-up |
-| ~~`docker compose up --build` cold-start verified~~ | **Resolved in Phase 5** — full stack reaches healthy and end-to-end auth + order submission works through the LB | — |
+| ~~Phase 6 manual smoke (full plan §6.2/§6.5/§6.6 checklist)~~ | **Resolved in Phase 6** — `infra/SMOKE_LOG.md` records the live run; 5/6 ✅, kill-resilience partial (see below) | — |
+| ~~Phase 6.3 simulator scenario run~~ | **Resolved in Phase 6** — `simulator scenario --baseUrl=http://localhost --file=docs/requirnments/seed.csv --expect=…` returns exit 0 against a clean `docker compose up` | — |
+| ~~Phase 7 no-compose dev mode~~ | **Resolved in Phase 7.1** — `infra/dev/postgres-only.compose.yml` brings up Postgres standalone on its own volume | — |
+| ~~Phase 8 README deliverables (§8.1–8.5)~~ | **Resolved in Phase 8** — top-level `README.md` lands How to run / Architecture diagram / Concurrency strategy / Trade-offs / Repository layout | — |
+| Phase 9 hardening (TLS, rate-limits, cpu/mem caps, pg_dump) | Plan flags as optional; skipped per "skip if time is tight". Documented in README's "Known deferred items" | Phase 9 (optional) |
+| `restart: unless-stopped` not auto-restarting on Docker Desktop after `docker kill` | Surfaced by Phase 6.5 live test. Known Docker Desktop / macOS quirk for SIGKILL exits. Workaround: `docker compose start <service>`. Production deployment would use k8s liveness probes or a process supervisor | Production / k8s |
+| Backend healthcheck `start_period: 30s` | Cold-start observations (Phase 6.1) show 39 s for both backends to reach `(healthy)` from the start. The 30 s start-period is tight but works in practice; would bump to 60 s on a slower laptop | Phase 9 / hardening |
+| `/actuator/prometheus` exposure | The backend transcript flagged this as broken in the Spring Boot 3.3.5 / Prometheus 1.x combo. Frontend doesn't talk to `/actuator` directly so nothing infra-side to do; backend follow-up. Documented in README's "Trade-offs" | Backend follow-up |
+| Self-trade prevention | Architecture §9.7 known gap; the simulator's `trade-counterparts` invariant was patched (during Phase 6 follow-up) to recognise self-trades as valid. Backend remains unchanged | Architecture-level / future |
+| ~~`docker compose up --build` cold-start verified~~ | **Resolved in Phase 5** — full stack reaches healthy and end-to-end auth + order submission works through the LB. Re-validated in Phase 6.1 | — |
 | ~~LB round-robin verified~~ | **Resolved in Phase 5** — 10 successive probes alternate 172.18.0.4 ↔ 172.18.0.3 in nginx access log | — |
-| ~~Postgres persistence across compose down/up~~ | **Resolved in Phase 4** — `down` (no `-v`) preserves the named volume; `up` again finds 5 symbols | — |
+| ~~Postgres persistence across compose down/up~~ | **Resolved in Phase 4** — `down` (no `-v`) preserves the named volume; `up` again finds 5 symbols. Re-validated in Phase 6.6 | — |
 
 ## Appendix D — Friction points
 
@@ -393,6 +487,9 @@ Six atomic commits. Build order: 0 → 1 → 4 → 2 → 3 → 5 (per the user's
 6. **`eval` double-expansion mangled `psql` SQL strings** — `eval "$D compose exec -T postgres psql -tAc 'SHOW max_connections;'"` parsed `SHOW` and `max_connections;` as separate args. Switched to `PATH=…:$PATH docker compose exec …` directly per command.
 7. **Wrong seed-user passwords on first login attempt** — guessed `password1`; actual values are `{user}123` keyed off display name (`alice123`, `bob123`, etc.). Found by reading `V3__seed_users.java`.
 8. **HEREDOC quoting in `git commit -m "$(cat <<EOF…EOF)"` continues to be unreliable** when the message body has nested parentheses. Sticking with `git commit -F /tmp/msg.txt`.
+9. **Plan §6.2 wording assumed `/api/symbols` was permitAll** — actually backend-protected per architecture §4.9. The smoke log corrects the curl flow (login → JWT → Bearer header).
+10. **`docker kill` on Docker Desktop / macOS doesn't reliably trigger `restart: unless-stopped`** — the killed container exits with 137 (SIGKILL) but compose doesn't restart it. Plan §6.5 expected automatic restart "within ~5 s"; we got "manual `docker compose start`" instead. Documented as a known Docker Desktop quirk in `infra/SMOKE_LOG.md` — would be addressed by k8s liveness probes or a process supervisor in production.
+11. **First scenario run against the live stack failed all five book assertions** — `getBook` was unauthenticated. Surfaced in Phase 6 because the WireMock unit tests didn't enforce auth. Three more bugs followed (`/tmp` symlink in `JsonReporter`, `BigDecimal.toPlainString` scale mismatch, self-trades flagged as invariant violations). All four fixed in commit `1876716` and recorded in the simulator transcript Turn 9. Plan-acceptance "live smoke" did real work — caught what the wiremock layer missed.
 
 ## Appendix E — Why this transcript exists
 
@@ -400,4 +497,4 @@ Per requirements §8.6:
 
 > Agent chat history export — the full conversation transcript(s) with the AI coding assistant (Copilot Chat or equivalent), exported as markdown / text / JSON and committed to the repo under `docs/ai-chat/`. Reviewers will read this to understand how the solution was produced.
 
-Naming convention `YYYY-MM-DD-<topic>.md`. The infra transcript joins `2026-04-25-backend-phases.md`, `2026-04-25-frontend-phases.md`, and `2026-04-24-design-session.md` already in this directory. Filename keeps the `-0-to-5` suffix until Phases 6–9 land (Phase 6 is procedural smoke verification, Phase 7 is optional dev-mode, Phase 8 is README docs, Phase 9 is optional hardening); rename to `2026-04-26-infra-phases.md` will follow the same pattern the backend and frontend transcripts established.
+Naming convention `YYYY-MM-DD-<topic>.md`. The infra transcript joins `2026-04-25-backend-phases.md`, `2026-04-25-frontend-phases.md`, `2026-04-26-simulator-phases.md`, and `2026-04-24-design-session.md` already in this directory. The file was renamed from `2026-04-26-infra-phases-0-to-5.md` → `2026-04-26-infra-phases.md` once Phases 6, 7.1, and 8 closed the code-producing infra phases (Phase 7.2 is README content covered by Phase 8; Phase 9 is plan-marked optional and explicitly deferred) — same convention the backend (`-0-to-5 → final`), frontend (`-0-to-3 → final`), and simulator (`-0-to-2 → final`) transcripts established.
