@@ -1,10 +1,49 @@
 # Top-level compose for the multi-instance limit-order stack.
 #
-# Phase 0 commits a stub so `docker compose config` validates; Phase 5
-# populates the real services (postgres, backend-1, backend-2, nginx,
-# frontend) per `docs/plans/infra-plan.md`. Port assignments are
+# Phase 4 populates the postgres service. Phases 2/3/5 add the rest
+# (backend-1, backend-2, nginx, frontend). Port assignments are
 # documented in `infra/README.md`.
 
 name: lob
 
-services: {}
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lob}
+      POSTGRES_USER: ${POSTGRES_USER:-lob}
+      # Force the reviewer to set the password in `.env` rather than
+      # silently booting with the default. The `:?` syntax fails compose
+      # validation at start-up if the variable is empty.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    ports:
+      # Loopback-only host bind: psql / IDE inspection from this machine
+      # works (`psql -h 127.0.0.1 -U lob`), but the DB is not reachable
+      # from other hosts on the LAN. Plan §4.6.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Named volume so data survives `docker compose down` (wiped only
+      # by `docker compose down -v`).
+      - pgdata:/var/lib/postgresql/data
+      # Schema-free initdb script (timezone only). See the file's
+      # comment for why DDL belongs in Flyway, not here.
+      - ./infra/postgres/00-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    command:
+      # Tunings via `command:` rather than a mounted postgresql.conf —
+      # one less file to keep in sync. Plan §4.5.
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lob} -d ${POSTGRES_DB:-lob}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
