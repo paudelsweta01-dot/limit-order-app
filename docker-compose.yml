@@ -1,10 +1,33 @@
 # Top-level compose for the multi-instance limit-order stack.
+# Five services: postgres, backend-1, backend-2, nginx (LB), frontend.
+# Port assignments are documented in `infra/README.md`.
 #
-# Phase 4 populates the postgres service. Phases 2/3/5 add the rest
-# (backend-1, backend-2, nginx, frontend). Port assignments are
-# documented in `infra/README.md`.
+# Cold-start sequence (plan §6.1):
+#   postgres healthy → backends Flyway-migrate → backends healthy
+#   → nginx accepts traffic → frontend serves SPA shell.
 
 name: lob
+
+# ---- shared bits for both backends (plan §5.2) ----
+# YAML anchor for the things backend-1 and backend-2 have in common; the
+# only fields that differ are container_name and INSTANCE_ID.
+x-backend-env: &backend-env
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/lob
+  SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-lob}
+  SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+  JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:?JWT_SIGNING_SECRET must be set in .env}
+  OUTBOX_RETENTION_MINUTES: ${OUTBOX_RETENTION_MINUTES:-5}
+
+x-backend-base: &backend-base
+  build: ./backend
+  depends_on:
+    # Backends won't even try to migrate until pg_isready returns OK,
+    # which sidesteps the "JDBC retry storm during initdb" failure mode.
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+  networks:
+    - lob-net
 
 services:
 
@@ -44,6 +67,70 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - lob-net
+
+  backend-1:
+    <<: *backend-base
+    container_name: lob-backend-1
+    environment:
+      <<: *backend-env
+      INSTANCE_ID: backend-1
+    # No host port — clients reach backends only via the nginx LB so
+    # every request exercises the multi-instance path (architecture §4.7).
+
+  backend-2:
+    <<: *backend-base
+    container_name: lob-backend-2
+    environment:
+      <<: *backend-env
+      INSTANCE_ID: backend-2
+
+  nginx:
+    image: nginx:alpine-slim
+    container_name: lob-nginx
+    depends_on:
+      # service_healthy (vs service_started, the short-form default)
+      # means compose waits for backend Spring boot + Flyway + LISTEN
+      # setup before exposing port 80. Without it, the LB serves a
+      # ~10 s window of 502s on cold start. Plan §5.5 / §6.1 ("within
+      # ~30 s on a developer laptop").
+      backend-1:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      # Replaces the default top-level config (which would only be a
+      # static-server stub). Phase 3's nginx.conf is the full LB config.
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    networks:
+      - lob-net
+
+  frontend:
+    build: ./frontend
+    container_name: lob-frontend
+    depends_on:
+      # frontend just serves a static SPA — it doesn't actually need
+      # nginx (the LB) to be ready, but ordering it after means the
+      # browser never hits a window where the page loads but /api 502s.
+      - nginx
+    ports:
+      - "4200:80"
+    # `on-failure` (vs unless-stopped) — frontend is static, so a clean
+    # exit means the user explicitly stopped it; only restart if it
+    # actually crashed.
+    restart: on-failure
+    networks:
+      - lob-net
 
 volumes:
   pgdata:
+
+networks:
+  # Explicit named bridge (plan §5.1). With `name: lob` at the top, the
+  # actual Docker network name becomes `lob_lob-net`.
+  lob-net:
+    driver: bridge
