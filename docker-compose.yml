@@ -99,6 +99,11 @@ services:
         condition: service_healthy
       backend-2:
         condition: service_healthy
+      # The LB now proxies / to the frontend container so SPA + API
+      # share an origin (port 80). Frontend is a static-file server
+      # so service_started is enough — no healthcheck needed.
+      frontend:
+        condition: service_started
     ports:
       - "80:80"
     volumes:
@@ -112,12 +117,13 @@ services:
   frontend:
     build: ./frontend
     container_name: lob-frontend
-    depends_on:
-      # frontend just serves a static SPA — it doesn't actually need
-      # nginx (the LB) to be ready, but ordering it after means the
-      # browser never hits a window where the page loads but /api 502s.
-      - nginx
+    # No depends_on — the LB now depends on us (proxies / through),
+    # not the other way round. The frontend container is a pure
+    # static-file server with no runtime deps on any other service.
     ports:
+      # Direct exposure on :4200 is kept for debugging (e.g. checking
+      # the SPA shell HTML without going through the LB), but the
+      # canonical browser URL is now http://localhost/ — see README.
       - "4200:80"
     # `on-failure` (vs unless-stopped) — frontend is static, so a clean
     # exit means the user explicitly stopped it; only restart if it

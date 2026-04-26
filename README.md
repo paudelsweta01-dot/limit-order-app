@@ -23,8 +23,8 @@ Once `docker compose ps` shows all five services healthy:
 
 | URL | What |
 |---|---|
-| <http://localhost:4200> | Angular SPA (login → market overview → place orders) |
-| <http://localhost/api> | API surface, behind nginx LB (round-robin across both backends) |
+| <http://localhost> | Angular SPA + API + WS, all same-origin via the LB nginx (login → market overview → place orders). **Use this URL in your browser.** |
+| <http://localhost:4200> | Direct access to the frontend container (debug only — bypasses the LB; the SPA's `POST /api/auth/login` will 405 here because :4200 is just a static-file server with no `/api/` proxy) |
 | <http://localhost/actuator/health> | Backend health (returns UP including outboxListener) |
 | `127.0.0.1:5432` (`psql -U lob -d lob`) | Postgres for inspection (loopback-only by design) |
 

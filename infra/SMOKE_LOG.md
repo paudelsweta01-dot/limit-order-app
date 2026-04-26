@@ -53,6 +53,17 @@ $ curl -sS -H "Authorization: Bearer $TOKEN" http://localhost/api/symbols    # 5
 - Plan §6.2 wording assumed `/api/symbols` was permitAll (`curl …
   returns 5 symbols`). The backend actually requires auth — the curl
   flow above is what works. Worth a one-line README note.
+- **Browser must use `http://localhost/` (port 80), not `http://localhost:4200`.**
+  The `:4200` port is the frontend container's static-file nginx —
+  it has no `/api/` proxy. The LB on `:80` now proxies `/` to the
+  frontend AND `/api/`, `/ws/`, `/actuator/health` to the backends,
+  so the SPA and API share an origin and the prod build's
+  `apiBaseUrl=""` resolves correctly. (Earlier in the session a
+  reviewer hit a `405 Not Allowed` opening `:4200` — root cause:
+  POST to `:4200/api/auth/login` fell through to the SPA's
+  `/index.html` fallback, and nginx refuses POST on static files.
+  Fix landed in commit `5206b0a` — added `upstream frontend` +
+  `location /` to `infra/nginx/nginx.conf`.)
 
 Acceptance: ✅ all four checks green (with the auth flow correction).
 
