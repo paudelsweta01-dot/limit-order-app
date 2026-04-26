@@ -1,4 +1,4 @@
-import { formatTimestamp, shortId } from './format';
+import { formatPrice, formatQty, formatTimestamp, shortId } from './format';
 
 describe('formatTimestamp', () => {
   it('returns "" for null/undefined/empty inputs', () => {
@@ -25,5 +25,34 @@ describe('shortId', () => {
   });
   it('returns short ids unchanged', () => {
     expect(shortId('abc')).toBe('abc');
+  });
+});
+
+describe('formatPrice', () => {
+  it('returns "-" for null/undefined/empty', () => {
+    expect(formatPrice(null)).toBe('-');
+    expect(formatPrice(undefined)).toBe('-');
+    expect(formatPrice('')).toBe('-');
+  });
+  it('preserves the input string verbatim — never reparses through Number', () => {
+    expect(formatPrice('180.50')).toBe('180.50');   // trailing zero kept
+    expect(formatPrice('0.0001')).toBe('0.0001');   // 4dp kept
+    expect(formatPrice('180')).toBe('180');         // no decimal point
+  });
+});
+
+describe('formatQty', () => {
+  it('returns "-" for null/undefined', () => {
+    expect(formatQty(null)).toBe('-');
+    expect(formatQty(undefined)).toBe('-');
+  });
+  it('renders zero as "0", small ints unchanged', () => {
+    expect(formatQty(0)).toBe('0');
+    expect(formatQty(50)).toBe('50');
+  });
+  it('inserts thousands separators on large quantities', () => {
+    expect(formatQty(1000)).toBe('1,000');
+    expect(formatQty(100000)).toBe('100,000');
+    expect(formatQty(1234567)).toBe('1,234,567');
   });
 });

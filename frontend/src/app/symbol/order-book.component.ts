@@ -1,6 +1,7 @@
 import { Component, computed, input } from '@angular/core';
 
 import type { BookLevel } from '../core/models';
+import { formatPrice, formatQty } from '../shared/format';
 
 const LEVELS_PER_SIDE = 5;
 
@@ -23,8 +24,8 @@ const LEVELS_PER_SIDE = 5;
           <tbody>
             @for (lvl of paddedBids(); track $index) {
               <tr [class.empty]="!lvl">
-                <td>{{ lvl?.qty ?? '' }}</td>
-                <td>{{ lvl?.price ?? '' }}</td>
+                <td>{{ lvl ? qty(lvl.qty) : '' }}</td>
+                <td>{{ lvl ? price(lvl.price) : '' }}</td>
                 <td>{{ lvl?.userCount ?? '' }}</td>
               </tr>
             }
@@ -40,8 +41,8 @@ const LEVELS_PER_SIDE = 5;
           <tbody>
             @for (lvl of paddedAsks(); track $index) {
               <tr [class.empty]="!lvl">
-                <td>{{ lvl?.qty ?? '' }}</td>
-                <td>{{ lvl?.price ?? '' }}</td>
+                <td>{{ lvl ? qty(lvl.qty) : '' }}</td>
+                <td>{{ lvl ? price(lvl.price) : '' }}</td>
                 <td>{{ lvl?.userCount ?? '' }}</td>
               </tr>
             }
@@ -66,6 +67,9 @@ export class OrderBookComponent {
 
   readonly paddedBids = computed(() => padToFive(this.bids()));
   readonly paddedAsks = computed(() => padToFive(this.asks()));
+
+  protected readonly price = formatPrice;
+  protected readonly qty = formatQty;
 }
 
 function padToFive(levels: readonly BookLevel[]): readonly (BookLevel | null)[] {

@@ -13,7 +13,7 @@ import { errorMessageOf } from '../core/http.interceptor';
 import type { MyOrder, OrderEvent, OrdersStreamEvent } from '../core/models';
 import { ToastService } from '../shared/toast.service';
 import { WsService } from '../core/ws.service';
-import { formatTimestamp, shortId } from '../shared/format';
+import { formatPrice, formatQty, formatTimestamp, shortId } from '../shared/format';
 import { HttpErrorResponse } from '@angular/common/http';
 
 const ACTIVE_STATUSES = new Set<MyOrder['status']>(['OPEN', 'PARTIAL']);
@@ -55,9 +55,9 @@ const ACTIVE_STATUSES = new Set<MyOrder['status']>(['OPEN', 'PARTIAL']);
             <td>{{ o.symbol }}</td>
             <td>{{ o.side }}</td>
             <td>{{ o.type }}</td>
-            <td>{{ o.price ?? '-' }}</td>
-            <td>{{ o.quantity }}</td>
-            <td>{{ o.filledQty }}</td>
+            <td>{{ price(o.price) }}</td>
+            <td>{{ qty(o.quantity) }}</td>
+            <td>{{ qty(o.filledQty) }}</td>
             <td>{{ o.status }}</td>
             <td>
               @if (canCancel(o)) {
@@ -70,7 +70,11 @@ const ACTIVE_STATUSES = new Set<MyOrder['status']>(['OPEN', 'PARTIAL']);
             </td>
           </tr>
         } @empty {
-          <tr><td colspan="9" class="empty">No open orders</td></tr>
+          <tr>
+            <td colspan="9" class="empty">
+              {{ loaded() ? 'No open orders' : 'Loading…' }}
+            </td>
+          </tr>
         }
       </tbody>
     </table>
@@ -94,6 +98,9 @@ export class MyOrdersPage implements OnInit {
   /** Map keyed by orderId for O(1) delta merges. */
   private readonly state = signal<ReadonlyMap<string, MyOrder>>(new Map());
   protected readonly pendingCancels = signal<ReadonlySet<string>>(new Set());
+  /** Flips true once the first REST or WS response has landed — until
+   *  then the empty-state row reads "Loading…" instead of "No open orders". */
+  protected readonly loaded = signal(false);
 
   protected readonly orders = computed(() => {
     const list = Array.from(this.state().values());
@@ -103,6 +110,8 @@ export class MyOrdersPage implements OnInit {
 
   protected readonly short = shortId;
   protected readonly formatTime = formatTimestamp;
+  protected readonly price = formatPrice;
+  protected readonly qty = formatQty;
 
   ngOnInit(): void {
     this.api
@@ -157,6 +166,7 @@ export class MyOrdersPage implements OnInit {
     const next = new Map<string, MyOrder>();
     for (const r of rows) next.set(r.orderId, r);
     this.state.set(next);
+    this.loaded.set(true);
   }
 
   private mergeDelta(d: OrderEvent): void {

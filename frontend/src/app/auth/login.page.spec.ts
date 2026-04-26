@@ -6,6 +6,7 @@ import { Subject, throwError } from 'rxjs';
 
 import { LoginPage } from './login.page';
 import { AuthService } from '../core/auth.service';
+import { ToastService } from '../shared/toast.service';
 import type { LoginResponse } from '../core/models';
 import { HttpErrorResponse } from '@angular/common/http';
 
@@ -18,12 +19,23 @@ class FakeAuth {
   });
 }
 
+class FakeToast {
+  shown: { msg: string; kind: string }[] = [];
+  show = vi.fn((msg: string, kind: 'success' | 'error' = 'success') => {
+    this.shown.push({ msg, kind });
+  });
+  dismiss = vi.fn();
+  current = () => null;
+}
+
 function makeFixture(returnUrl?: string): {
   fixture: ComponentFixture<LoginPage>;
   auth: FakeAuth;
+  toast: FakeToast;
   navigateByUrl: ReturnType<typeof vi.fn>;
 } {
   const auth = new FakeAuth();
+  const toast = new FakeToast();
   const navigateByUrl = vi.fn().mockResolvedValue(true);
   const queryParams = returnUrl ? { returnUrl } : {};
 
@@ -34,6 +46,7 @@ function makeFixture(returnUrl?: string): {
       provideHttpClientTesting(),
       provideRouter([]),
       { provide: AuthService, useValue: auth },
+      { provide: ToastService, useValue: toast },
       {
         provide: ActivatedRoute,
         useValue: { snapshot: { queryParamMap: convertToParamMap(queryParams) } },
@@ -45,7 +58,7 @@ function makeFixture(returnUrl?: string): {
 
   const fixture = TestBed.createComponent(LoginPage);
   fixture.detectChanges();
-  return { fixture, auth, navigateByUrl };
+  return { fixture, auth, toast, navigateByUrl };
 }
 
 function setField(fixture: ComponentFixture<LoginPage>, name: string, value: string) {
@@ -106,6 +119,18 @@ describe('LoginPage', () => {
     await fixture.whenStable();
 
     expect(navigateByUrl).toHaveBeenCalledWith('/symbol/AAPL');
+  });
+
+  it('on success fires a "Welcome, <name>" toast', async () => {
+    const { fixture, auth, toast } = makeFixture();
+    setField(fixture, 'username', 'alice');
+    setField(fixture, 'password', 'pw');
+    fixture.nativeElement.querySelector('form')!.dispatchEvent(new Event('submit'));
+
+    auth.loginSubject.next({ token: 't', userId: 'u', name: 'Alice' });
+    await fixture.whenStable();
+
+    expect(toast.shown[0]).toEqual({ msg: 'Welcome, Alice', kind: 'success' });
   });
 
   it('refuses to bounce back to /login (avoids redirect loops)', async () => {

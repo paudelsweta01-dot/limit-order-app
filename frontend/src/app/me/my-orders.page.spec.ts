@@ -79,6 +79,18 @@ describe('MyOrdersPage', () => {
     expect((fixture.nativeElement.querySelector('.empty') as HTMLElement).textContent).toContain('No open orders');
   });
 
+  it('shows "Loading…" while getMyOrders is still in flight (distinct from empty state)', () => {
+    const { fixture, api } = makeFixture();
+    const pending = new Subject<readonly MyOrder[]>();
+    api.getMyOrders = vi.fn(() => pending.asObservable());
+    fixture.detectChanges();
+    expect((fixture.nativeElement.querySelector('.empty') as HTMLElement).textContent?.trim()).toBe('Loading…');
+
+    pending.next([]);
+    fixture.detectChanges();
+    expect((fixture.nativeElement.querySelector('.empty') as HTMLElement).textContent?.trim()).toBe('No open orders');
+  });
+
   it('renders one row per order from getMyOrders, columns matching §6.4', () => {
     const { fixture, api } = makeFixture();
     api.initial = [sampleOrder({})];

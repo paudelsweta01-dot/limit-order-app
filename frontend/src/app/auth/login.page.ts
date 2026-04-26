@@ -5,6 +5,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 
 import { AuthService } from '../core/auth.service';
 import { errorMessageOf } from '../core/http.interceptor';
+import { ToastService } from '../shared/toast.service';
 
 /**
  * §6.1 Login. Reactive form, two fields, single "Log in" button.
@@ -57,6 +58,7 @@ export class LoginPage {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
+  private readonly toast = inject(ToastService);
 
   protected readonly pending = signal(false);
   protected readonly errorMessage = signal<string | null>(null);
@@ -72,7 +74,8 @@ export class LoginPage {
     this.errorMessage.set(null);
 
     this.auth.login(this.form.getRawValue()).subscribe({
-      next: () => {
+      next: (res) => {
+        this.toast.show(`Welcome, ${res.name}`);
         const target = this.resolveReturnUrl();
         void this.router.navigateByUrl(target);
       },

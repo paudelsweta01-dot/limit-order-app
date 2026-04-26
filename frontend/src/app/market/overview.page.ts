@@ -17,6 +17,7 @@ import type {
   SymbolRow,
   TradeEvent,
 } from '../core/models';
+import { formatPrice, formatQty } from '../shared/format';
 import { WsService } from '../core/ws.service';
 
 interface MarketRow {
@@ -70,11 +71,11 @@ interface MarketRow {
           @for (row of rows(); track row.symbol) {
             <tr [attr.data-symbol]="row.symbol">
               <td>{{ row.symbol }}</td>
-              <td>{{ row.last ?? '-' }}</td>
-              <td>{{ bestBid(row) ?? '-' }}</td>
-              <td>{{ bestAsk(row) ?? '-' }}</td>
-              <td>{{ demand(row) }}</td>
-              <td>{{ supply(row) }}</td>
+              <td>{{ price(row.last) }}</td>
+              <td>{{ price(bestBid(row)) }}</td>
+              <td>{{ price(bestAsk(row)) }}</td>
+              <td>{{ qty(demand(row)) }}</td>
+              <td>{{ qty(supply(row)) }}</td>
               <td>
                 <a class="open-btn" [routerLink]="['/symbol', row.symbol]">Open</a>
               </td>
@@ -198,4 +199,7 @@ export class OverviewPage implements OnInit {
   protected supply(row: MarketRow): number {
     return row.asks.reduce((acc, lvl) => acc + lvl.qty, 0);
   }
+
+  protected readonly price = formatPrice;
+  protected readonly qty = formatQty;
 }

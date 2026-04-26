@@ -11,7 +11,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ApiService } from '../core/api.service';
 import type { MyFill, OrdersStreamEvent } from '../core/models';
 import { WsService } from '../core/ws.service';
-import { formatTimestamp, shortId } from '../shared/format';
+import { formatPrice, formatQty, formatTimestamp, shortId } from '../shared/format';
 
 const FILL_TRIGGER_STATUSES = new Set(['PARTIAL', 'FILLED']);
 
@@ -46,13 +46,17 @@ const FILL_TRIGGER_STATUSES = new Set(['PARTIAL', 'FILLED']);
             <td>{{ short(f.tradeId) }}</td>
             <td>{{ f.symbol }}</td>
             <td>{{ f.side }}</td>
-            <td>{{ f.price }}</td>
-            <td>{{ f.quantity }}</td>
+            <td>{{ price(f.price) }}</td>
+            <td>{{ qty(f.quantity) }}</td>
             <td>{{ formatTime(f.executedAt) }}</td>
             <td>{{ f.counterparty }}</td>
           </tr>
         } @empty {
-          <tr><td colspan="7" class="empty">No fills yet</td></tr>
+          <tr>
+            <td colspan="7" class="empty">
+              {{ loaded() ? 'No fills yet' : 'Loading…' }}
+            </td>
+          </tr>
         }
       </tbody>
     </table>
@@ -71,6 +75,9 @@ export class MyFillsPage implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly state = signal<readonly MyFill[]>([]);
+  /** Flips true on first getMyFills response — distinguishes "loading" from
+   *  "loaded but empty" in the empty-state row. */
+  protected readonly loaded = signal(false);
 
   protected readonly fills = computed(() => {
     const list = [...this.state()];
@@ -80,6 +87,8 @@ export class MyFillsPage implements OnInit {
 
   protected readonly short = shortId;
   protected readonly formatTime = formatTimestamp;
+  protected readonly price = formatPrice;
+  protected readonly qty = formatQty;
 
   ngOnInit(): void {
     this.refresh();
@@ -100,6 +109,9 @@ export class MyFillsPage implements OnInit {
     this.api
       .getMyFills()
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((rows) => this.state.set(rows));
+      .subscribe((rows) => {
+        this.state.set(rows);
+        this.loaded.set(true);
+      });
   }
 }

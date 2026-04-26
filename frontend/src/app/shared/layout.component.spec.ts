@@ -4,6 +4,7 @@ import { signal } from '@angular/core';
 
 import { LayoutComponent } from './layout.component';
 import { AuthService } from '../core/auth.service';
+import { ToastService } from './toast.service';
 
 class FakeAuth {
   currentUser = signal<{ userId: string; name: string } | null>({
@@ -13,16 +14,25 @@ class FakeAuth {
   logout = vi.fn();
 }
 
+class FakeToast {
+  current = signal<{ id: number; kind: string; message: string } | null>(null);
+  dismiss = vi.fn(() => this.current.set(null));
+  show = vi.fn();
+}
+
 describe('LayoutComponent', () => {
   let auth: FakeAuth;
+  let toast: FakeToast;
 
   beforeEach(() => {
     auth = new FakeAuth();
+    toast = new FakeToast();
     TestBed.configureTestingModule({
       imports: [LayoutComponent],
       providers: [
         provideRouter([]),
         { provide: AuthService, useValue: auth },
+        { provide: ToastService, useValue: toast },
       ],
     });
   });
@@ -63,5 +73,36 @@ describe('LayoutComponent', () => {
 
     const html = (fixture.nativeElement as HTMLElement).innerHTML;
     expect(html).toContain('router-outlet');
+  });
+
+  it('renders the current toast inside the chrome with the right kind class', () => {
+    toast.current.set({ id: 1, kind: 'success', message: 'Welcome, Alice' });
+    const fixture = TestBed.createComponent(LayoutComponent);
+    fixture.detectChanges();
+    const el = fixture.nativeElement.querySelector('.toast') as HTMLElement;
+    expect(el.textContent).toContain('Welcome, Alice');
+    expect(el.classList.contains('toast-error')).toBe(false);
+
+    toast.current.set({ id: 2, kind: 'error', message: 'oh no' });
+    fixture.detectChanges();
+    const err = fixture.nativeElement.querySelector('.toast') as HTMLElement;
+    expect(err.classList.contains('toast-error')).toBe(true);
+  });
+
+  it('ESC dismisses a visible toast', () => {
+    toast.current.set({ id: 1, kind: 'success', message: 'hi' });
+    const fixture = TestBed.createComponent(LayoutComponent);
+    fixture.detectChanges();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    expect(toast.dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('ESC is a no-op when no toast is visible', () => {
+    const fixture = TestBed.createComponent(LayoutComponent);
+    fixture.detectChanges();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(toast.dismiss).not.toHaveBeenCalled();
   });
 });

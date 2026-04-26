@@ -15,6 +15,7 @@ import type {
   BookStreamEvent,
   BookTotals,
 } from '../core/models';
+import { formatPrice, formatQty } from '../shared/format';
 import { WsService } from '../core/ws.service';
 import { OrderBookComponent } from './order-book.component';
 import { PlaceOrderForm } from './place-order.form';
@@ -53,9 +54,9 @@ const EMPTY_BOOK: BookState = { bids: [], asks: [], last: null };
       <app-order-book [bids]="book().bids" [asks]="book().asks" />
 
       <p class="totals">
-        Total Demand: <strong>{{ totals().demand }}</strong> &nbsp;|&nbsp;
-        Total Supply: <strong>{{ totals().supply }}</strong> &nbsp;|&nbsp;
-        Last: <strong>{{ book().last ?? '-' }}</strong>
+        Total Demand: <strong>{{ qty(totals().demand) }}</strong> &nbsp;|&nbsp;
+        Total Supply: <strong>{{ qty(totals().supply) }}</strong> &nbsp;|&nbsp;
+        Last: <strong>{{ price(book().last) }}</strong>
       </p>
 
       <app-place-order-form [symbol]="symbolCode()" />
@@ -79,6 +80,9 @@ export class SymbolDetailPage implements OnInit {
   protected readonly symbolCode = signal<string>('');
   protected readonly book = signal<BookState>(EMPTY_BOOK);
   protected readonly totals = signal<BookTotals>({ demand: 0, supply: 0 });
+
+  protected readonly price = formatPrice;
+  protected readonly qty = formatQty;
 
   ngOnInit(): void {
     const sym = this.route.snapshot.paramMap.get('symbol') ?? '';

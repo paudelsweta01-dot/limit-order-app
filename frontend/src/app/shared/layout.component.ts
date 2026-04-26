@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { Component, HostListener, inject } from '@angular/core';
 import { RouterLink, RouterOutlet } from '@angular/router';
 
 import { AuthService } from '../core/auth.service';
@@ -60,5 +60,11 @@ export class LayoutComponent {
 
   protected logout(): void {
     this.auth.logout();
+  }
+
+  /** Plan §7.5 a11y: ESC dismisses any visible toast. */
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.toast.current()) this.toast.dismiss();
   }
 }

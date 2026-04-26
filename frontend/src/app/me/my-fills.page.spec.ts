@@ -57,6 +57,18 @@ describe('MyFillsPage', () => {
     expect((fixture.nativeElement.querySelector('.empty') as HTMLElement).textContent).toContain('No fills yet');
   });
 
+  it('shows "Loading…" while the initial getMyFills is still in flight', () => {
+    const { fixture, api } = makeFixture();
+    const pending = new Subject<readonly MyFill[]>();
+    api.getMyFills = vi.fn(() => pending.asObservable());
+    fixture.detectChanges();
+    expect((fixture.nativeElement.querySelector('.empty') as HTMLElement).textContent?.trim()).toBe('Loading…');
+
+    pending.next([]);
+    fixture.detectChanges();
+    expect((fixture.nativeElement.querySelector('.empty') as HTMLElement).textContent?.trim()).toBe('No fills yet');
+  });
+
   it('renders one row per fill, columns matching §6.4', () => {
     const { fixture, api } = makeFixture();
     api.current = [sampleFill({})];
