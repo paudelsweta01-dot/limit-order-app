@@ -1,0 +1,31 @@
+# Trim the build context. Without this every `docker build backend/`
+# would ship the full local `target/` (compiled classes + JARs from
+# `mvn install`), `.idea/`, etc. — slow and pollutes layer caches.
+
+# Maven build output (we re-build inside the container anyway)
+target/
+
+# IDEs / editor metadata
+.idea/
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+.metadata/
+*.iml
+*.ipr
+*.iws
+nbproject/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local env files (defensive — would normally be at repo root)
+.env
+.env.local
