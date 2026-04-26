@@ -10,7 +10,8 @@ import com.sweta.limitorder.simulator.api.TokenCache;
 import com.sweta.limitorder.simulator.mode.ConsistencyCheckRunner;
 import com.sweta.limitorder.simulator.mode.MultiInstanceRunner;
 import com.sweta.limitorder.simulator.mode.SeedCredentials;
-import com.sweta.limitorder.simulator.report.AssertionResult;
+import com.sweta.limitorder.simulator.report.ConsoleReporter;
+import com.sweta.limitorder.simulator.report.JsonReporter;
 import com.sweta.limitorder.simulator.report.RunReport;
 
 import picocli.CommandLine.Command;
@@ -80,17 +81,8 @@ public class MultiInstanceCommand implements Callable<Integer> {
         report.assertions.addAll(checkReport.assertions);
         report.tradesObserved += checkReport.tradesObserved;
 
-        System.out.println("multi-instance run " + ctx.runId);
-        System.out.printf("  duration:        %s%n", report.duration());
-        System.out.printf("  submitted:       %d%n", report.submitted);
-        System.out.printf("  accepted:        %d%n", report.accepted);
-        System.out.printf("  rejected:        %d%n", report.rejected);
-        System.out.printf("  trades observed: %d%n", report.tradesObserved);
-        System.out.println("  invariants:");
-        for (AssertionResult a : report.assertions) {
-            System.out.printf("    [%s] %s%n", a.passed() ? "PASS" : "FAIL", a.name());
-            for (String d : a.diffs()) System.out.println("      " + d);
-        }
+        ConsoleReporter.print(report);
+        if (common.report != null) JsonReporter.write(report, common.report);
 
         return report.allAssertionsPassed() ? 0 : 1;
     }
