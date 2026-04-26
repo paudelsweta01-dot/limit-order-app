@@ -2,6 +2,7 @@ import { Component, inject } from '@angular/core';
 import { RouterLink, RouterOutlet } from '@angular/router';
 
 import { AuthService } from '../core/auth.service';
+import { ToastService } from './toast.service';
 
 /**
  * Authenticated shell. Header per §6.2 wireframe — app name on the left,
@@ -26,6 +27,11 @@ import { AuthService } from '../core/auth.service';
     <main class="app-content">
       <router-outlet />
     </main>
+    @if (toast.current(); as t) {
+      <div class="toast" [class.toast-error]="t.kind === 'error'" role="status" aria-live="polite">
+        {{ t.message }}
+      </div>
+    }
   `,
   styles: [`
     .app-header {
@@ -38,10 +44,18 @@ import { AuthService } from '../core/auth.service';
     .brand { font-weight: 600; text-decoration: none; color: inherit; }
     .user-controls { display: flex; align-items: center; gap: 0.5rem; }
     .app-content { padding: 1.25rem; }
+    .toast {
+      position: fixed; right: 1rem; bottom: 1rem;
+      padding: 0.6rem 1rem; border-radius: 4px;
+      background: #2a7a2a; color: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+    .toast-error { background: #b00020; }
   `],
 })
 export class LayoutComponent {
   private readonly auth = inject(AuthService);
+  protected readonly toast = inject(ToastService);
   protected readonly currentUser = this.auth.currentUser;
 
   protected logout(): void {
