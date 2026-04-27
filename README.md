@@ -161,6 +161,33 @@ Things explicitly chosen, with their cost:
   Direct `MeterRegistry` assertions cover the metrics machinery; only
   the scrape endpoint is missing.
 
+## Hardening (infra Phase 9)
+
+Optional production-leaning extras. Off by default — none of these are
+required for the reviewer flow above.
+
+- **TLS via mkcert** — `make tls-setup` generates a local-CA-signed
+  cert, then start the stack with the overlay:
+  ```bash
+  docker compose -f docker-compose.yml -f infra/tls/docker-compose.tls.yml up --build
+  ```
+  Browser opens `https://localhost/` without warnings; `:80` 301-redirects.
+- **Login rate limit** — nginx caps `/api/auth/login` at 5 req/min/IP
+  (burst 2, returns 429 on excess). See `infra/nginx/nginx.conf`.
+- **Compose cpu / mem caps** — each service has a `cpus:` + `mem_limit:`
+  in `docker-compose.yml` so a runaway process can't drag the laptop
+  into swap. `docker stats` shows enforced limits.
+- **Postgres backup** — `make backup` runs `pg_dump` against the live
+  stack and writes `backups/lob-<ts>.sql.gz`. See
+  `infra/scripts/backup.sh`.
+- **SIGTERM-graceful simulator** — `kill -TERM <pid>` on a running
+  `load` or `multi-instance` mode produces a complete report (workers
+  drain, JSON report still written). See `simulator/TIME_SKEW_REVIEW.md`
+  for the related ordering-vs-timing review.
+- **Backpressure on simulator load** — auto-throttles the submission
+  rate to half if the server returns 503s or p99 latency doubles vs the
+  first window's baseline; releases on recovery.
+
 ## Known deferred items
 
 Per the per-component plans + the smoke log:
@@ -174,9 +201,6 @@ Per the per-component plans + the smoke log:
   reliably fire on Docker Desktop (macOS) for SIGKILL. Manual recovery
   is `docker compose start <service>`. Production deployment would
   use k8s liveness probes or a process supervisor.
-- **TLS / rate limits / cpu+mem caps / `pg_dump` backup script** — Phase
-  9 of the infra plan, marked optional; skipped per "skip if time is
-  tight, document as deferred".
 - **uuidv7 in browsers** — using a small dependency (`uuidv7` package,
   ~1 KB) since browsers' `crypto.randomUUID()` produces v4. Time-ordered
   ids help debugging.
@@ -207,7 +231,7 @@ Per the per-component plans + the smoke log:
 ## Tests
 
 ```bash
-(cd backend   && ./mvnw test)   # 110+ tests (matching, scenario replay, multi-node WS proof)
+(cd backend   && ./mvnw test)   # 114 tests (matching, scenario replay, multi-node WS proof, BigDecimal round-trip, qty bounds)
 (cd frontend  && npx ng test --watch=false)   # 118 Vitest unit tests
-(cd simulator && ./mvnw test)   # 59 unit tests across CLI, API client, modes, reporters
+(cd simulator && ./mvnw test)   # 63 unit tests + 1 Testcontainers integration test (skipped if backend JAR missing)
 ```

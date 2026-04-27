@@ -1,0 +1,33 @@
+# Plan §9.1 — TLS overlay for the compose stack.
+#
+# Layered on top of the base docker-compose.yml; together they enable
+# https://localhost/ via mkcert-issued certs.
+#
+# Activation:
+#     docker compose -f docker-compose.yml -f infra/tls/docker-compose.tls.yml up --build
+#
+# Pre-conditions:
+#     1. `make tls-setup` has been run on this machine (one-time).
+#        It generates infra/tls/localhost.pem + localhost-key.pem and
+#        installs the mkcert local CA in the system trust store.
+#     2. Port 443 is free on the host.
+#
+# What this overlay changes:
+#   - nginx exposes :443 (in addition to :80).
+#   - nginx mounts the TLS-aware nginx.tls.conf instead of the plain
+#     nginx.conf.
+#   - nginx mounts infra/tls/ as a read-only volume so the certs are
+#     available to the container.
+
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Volume paths use the same project-root-relative form as the base
+      # docker-compose.yml. Compose 2.x resolves overlay paths against
+      # the base file (not the overlay file), so this is the form that
+      # actually works in practice — verified via `docker compose config`.
+      - ./infra/nginx/nginx.tls.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/tls:/etc/nginx/tls:ro

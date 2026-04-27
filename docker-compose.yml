@@ -28,6 +28,15 @@ x-backend-base: &backend-base
   restart: unless-stopped
   networks:
     - lob-net
+  # Plan §9.3 — cpu / mem caps so a runaway JVM (e.g. a regression that
+  # leaks engine memory under sustained simulator load) can't drag the
+  # reviewer's laptop into swap. 1 CPU + 768 MB is enough headroom for
+  # the §5.5 stress profile (~83 ops/s aggregate); two backends together
+  # peak ~25 % of an M-class core. `mem_reservation` keeps the soft
+  # floor where the JVM will actually live; `mem_limit` is the hard cap.
+  cpus: "1.0"
+  mem_limit: 768m
+  mem_reservation: 384m
 
 services:
 
@@ -69,6 +78,12 @@ services:
     restart: unless-stopped
     networks:
       - lob-net
+    # Plan §9.3 — DB resource caps. shared_buffers=256MB is set at the
+    # postgres command line above, so 768 MB is comfortable headroom
+    # without trapping the OS into swap.
+    cpus: "1.0"
+    mem_limit: 768m
+    mem_reservation: 384m
 
   backend-1:
     <<: *backend-base
@@ -113,6 +128,10 @@ services:
     restart: unless-stopped
     networks:
       - lob-net
+    # Plan §9.3 — nginx is the cheapest container in the stack; 256 MB
+    # is generous (steady-state ~12 MB).
+    cpus: "0.5"
+    mem_limit: 256m
 
   frontend:
     build: ./frontend
@@ -131,6 +150,9 @@ services:
     restart: on-failure
     networks:
       - lob-net
+    # Plan §9.3 — static-file nginx, even cheaper than the LB.
+    cpus: "0.25"
+    mem_limit: 128m
 
 volumes:
   pgdata:

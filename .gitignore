@@ -51,3 +51,7 @@ pgdata/
 
 # --- Docker ---
 *.pid
+
+# --- Plan §9.1 / §9.4 — TLS certs + backup dumps (host-local artefacts) ---
+infra/tls/*.pem
+backups/
