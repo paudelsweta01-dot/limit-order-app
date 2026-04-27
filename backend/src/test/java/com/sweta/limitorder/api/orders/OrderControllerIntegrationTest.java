@@ -107,6 +107,19 @@ class OrderControllerIntegrationTest {
     }
 
     @Test
+    void postWithLongMaxQuantityReturns400() {
+        // Plan §10.4 — Long.MAX_VALUE is well above the engine's sane
+        // upper bound; rejection prevents the BIGINT * NUMERIC overflow path.
+        assertValidationFails(limit("c1", "AAPL", OrderSide.BUY, "175", Long.MAX_VALUE));
+    }
+
+    @Test
+    void postWithJustOverMaxQuantityReturns400() {
+        // 10^9 is the bound — 10^9 + 1 must be rejected.
+        assertValidationFails(limit("c1", "AAPL", OrderSide.BUY, "175", 1_000_000_001L));
+    }
+
+    @Test
     void postWithUnknownSymbolReturns400() {
         SubmitOrderRequest req = limit("c1", "ZZZZ", OrderSide.BUY, "100", 100);
         ResponseEntity<Map> r = exchangeMap(HttpMethod.POST, "/api/orders", aliceToken, req);
@@ -131,6 +144,65 @@ class OrderControllerIntegrationTest {
         ResponseEntity<Map> r = exchangeMap(HttpMethod.POST, "/api/orders", aliceToken, req);
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(r.getBody().get("code")).isEqualTo("VALIDATION_FAILED");
+    }
+
+    // ---------- created_at sourced from the DB clock (plan §10.3) ----------
+
+    @Test
+    void createdAtComesFromDbClockNotJvm() {
+        // The architecture pins time priority on `created_at` and we want
+        // multi-instance clock skew NOT to influence ordering. Two angles:
+        //
+        //   (1) Schema introspection — the column has DEFAULT now(), and
+        //       OrderRepository.insertNew omits the column, so the default
+        //       fires. Inspecting information_schema.columns proves (a).
+        //   (2) Round-trip a real submission and confirm `created_at` is
+        //       within Postgres' transaction_timestamp window. Since the
+        //       Testcontainers Postgres and the test JVM share host wall
+        //       clock, this is a smoke check — the *real* invariant is (1).
+        String dflt = jdbc.queryForObject("""
+                SELECT column_default
+                  FROM information_schema.columns
+                 WHERE table_name = 'orders' AND column_name = 'created_at'
+                """, String.class);
+        assertThat(dflt).isEqualToIgnoringCase("now()");
+
+        UUID orderId = submit(aliceToken, limit("c-clk", "AAPL", OrderSide.BUY, "175.00", 100));
+        java.time.Instant createdAt = jdbc.queryForObject(
+                "SELECT created_at FROM orders WHERE order_id = ?",
+                java.time.Instant.class, orderId);
+        java.time.Instant dbNow = jdbc.queryForObject(
+                "SELECT transaction_timestamp()", java.time.Instant.class);
+        // created_at must be within 5s of the DB's current transaction
+        // timestamp — generous margin for slow CI hosts.
+        assertThat(java.time.Duration.between(createdAt, dbNow).abs())
+                .isLessThan(java.time.Duration.ofSeconds(5));
+    }
+
+    // ---------- BigDecimal wire round-trip (plan §10.2) ----------
+
+    @Test
+    void priceRoundTripsAsPlainDecimal() {
+        // Submit at NUMERIC(12,4) precision and read it back via /api/orders/mine.
+        // The wire response must preserve the trailing zeros AND must NOT
+        // use scientific notation, even for round prices.
+        SubmitOrderRequest req = limit("price-rt", "AAPL", OrderSide.BUY, "180.5000", 100);
+        ResponseEntity<SubmitOrderResponse> created = rest.exchange(
+                "/api/orders", HttpMethod.POST, bearer(aliceToken, req), SubmitOrderResponse.class);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        // Pull the raw JSON from /api/orders/mine and assert the price field
+        // is the literal "180.5000" (no scientific notation, no scale loss).
+        ResponseEntity<String> raw = rest.exchange(
+                "/api/orders/mine", HttpMethod.GET, bearer(aliceToken), String.class);
+        assertThat(raw.getStatusCode()).isEqualTo(HttpStatus.OK);
+        // BigDecimal serialises as a JSON number (unquoted) — `write-bigdecimal-as-plain`
+        // governs the digits, not the type. Scale (4 fractional digits) and the
+        // absence of scientific notation are what matter here.
+        assertThat(raw.getBody())
+                .contains("\"price\":180.5000")
+                .doesNotContain("E+")
+                .doesNotContain("E-");
     }
 
     // ---------- Idempotent replay ----------

@@ -27,6 +27,15 @@ spring:
     baseline-on-migrate: true
     locations: classpath:db/migration
 
+  # Plan §10.2 — BigDecimal must serialise as a plain decimal string on
+  # the wire, never scientific notation. Without this, a price of
+  # 1_000_000.0000 would round-trip as 1.0E+6 and the simulator's
+  # numeric-string comparator would still pass, but a human reading
+  # `/api/orders/mine` would see surprise notation. Belt-and-braces.
+  jackson:
+    generator:
+      write-bigdecimal-as-plain: true
+
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful

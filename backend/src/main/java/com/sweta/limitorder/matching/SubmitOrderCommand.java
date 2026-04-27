@@ -22,6 +22,15 @@ public record SubmitOrderCommand(
         long quantity
 ) {
 
+    /**
+     * Plan §10.4 — sane upper bound on quantity. 10^9 is well above the
+     * spec's 5000-orders/min × 5-symbol scale and below the engine's
+     * BIGINT * NUMERIC(12,4) overflow threshold (≈ 9.2 × 10^14 / 10^9
+     * = 9.2 × 10^5 worth of price headroom). Anything bigger is almost
+     * certainly a bug in the caller.
+     */
+    public static final long MAX_QUANTITY = 1_000_000_000L;
+
     public SubmitOrderCommand {
         if (clientOrderId == null || clientOrderId.isBlank()) {
             throw new IllegalArgumentException("clientOrderId is required");
@@ -33,6 +42,9 @@ public record SubmitOrderCommand(
         if (side == null) throw new IllegalArgumentException("side is required");
         if (type == null) throw new IllegalArgumentException("type is required");
         if (quantity <= 0) throw new IllegalArgumentException("quantity must be positive");
+        if (quantity > MAX_QUANTITY) {
+            throw new IllegalArgumentException("quantity exceeds upper bound (" + MAX_QUANTITY + ")");
+        }
         if (type == OrderType.LIMIT && price == null) {
             throw new IllegalArgumentException("LIMIT orders require a price");
         }
