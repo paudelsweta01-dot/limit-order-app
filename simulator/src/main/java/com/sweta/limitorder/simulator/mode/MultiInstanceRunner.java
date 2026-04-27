@@ -56,6 +56,17 @@ public class MultiInstanceRunner {
     private final Duration duration;
     private final long seed;
 
+    /** Plan §9.2 — flipped by {@link #requestStop()} (e.g. from a SIGTERM
+     *  shutdown hook) to exit worker loops mid-run so the convergence
+     *  check + report still get to run. */
+    private final AtomicBoolean stop = new AtomicBoolean(false);
+
+    /** Plan §9.2 — request a graceful stop; main thread continues into
+     *  the convergence check + report write. */
+    public void requestStop() {
+        stop.set(true);
+    }
+
     public MultiInstanceRunner(LobApiClient nodeA, LobApiClient nodeB,
                                TokenCache tokens, SeedCredentials creds,
                                List<String> usernames,
@@ -98,8 +109,8 @@ public class MultiInstanceRunner {
         double meanInterArrivalMs = 1000.0 * users / Math.max(1, rate);
 
         // Run two-node load in parallel.
+        stop.set(false);
         LoadStats stats = new LoadStats();
-        AtomicBoolean stop = new AtomicBoolean(false);
         ExecutorService workers = Executors.newFixedThreadPool(users, r -> {
             Thread t = new Thread(r);
             t.setName("multi-load-" + t.getId());
@@ -116,11 +127,15 @@ public class MultiInstanceRunner {
                     idx % 2 == 0 ? "A" : "B"));
         }
 
-        try {
-            long sleepMs = Math.max(0, runEnd.toEpochMilli() - Instant.now().toEpochMilli());
-            Thread.sleep(sleepMs);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
+        // Plan §9.2 — wait for runEnd OR external stop request, polling
+        // every 100 ms so SIGTERM is responsive.
+        while (!stop.get() && Instant.now().isBefore(runEnd)) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
         }
         stop.set(true);
         workers.shutdown();

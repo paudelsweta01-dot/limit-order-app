@@ -17,6 +17,10 @@ public final class LoadStats {
     private final LongAdder submitted = new LongAdder();
     private final LongAdder accepted  = new LongAdder();
     private final LongAdder rejected  = new LongAdder();
+    /** 503s in the *current* window — reset on snapshot. Drives backpressure
+     *  evaluation (plan §9.1). Does NOT shadow {@link #rejected}; a 503 is
+     *  counted in both. */
+    private final LongAdder windowServer503 = new LongAdder();
 
     /** Current-window latency samples in nanoseconds. */
     private final List<Long> latencies = Collections.synchronizedList(new ArrayList<>());
@@ -24,6 +28,7 @@ public final class LoadStats {
     public void recordSubmitted()   { submitted.increment(); }
     public void recordAccepted()    { accepted.increment(); }
     public void recordRejected()    { rejected.increment(); }
+    public void recordServer503()   { windowServer503.increment(); }
     public void recordLatencyNanos(long nanos) { latencies.add(nanos); }
 
     public long submitted() { return submitted.sum(); }
@@ -37,15 +42,17 @@ public final class LoadStats {
             sortedNanos = latencies.stream().mapToLong(Long::longValue).sorted().toArray();
             latencies.clear();
         }
+        long server503Window = windowServer503.sumThenReset();
         if (sortedNanos.length == 0) {
             return new Snapshot(submitted(), accepted(), rejected(),
-                    0, 0, 0, 0);
+                    0, 0, 0, 0, server503Window);
         }
         return new Snapshot(submitted(), accepted(), rejected(),
                 sortedNanos.length,
                 percentile(sortedNanos, 0.50),
                 percentile(sortedNanos, 0.95),
-                percentile(sortedNanos, 0.99));
+                percentile(sortedNanos, 0.99),
+                server503Window);
     }
 
     private static long percentile(long[] sorted, double p) {
@@ -57,7 +64,8 @@ public final class LoadStats {
     public record Snapshot(
             long submitted, long accepted, long rejected,
             int windowSamples,
-            long p50Nanos, long p95Nanos, long p99Nanos) {
+            long p50Nanos, long p95Nanos, long p99Nanos,
+            long windowServer503) {
 
         public String formatLine() {
             return "load: submitted=" + submitted
@@ -66,7 +74,8 @@ public final class LoadStats {
                     + " | window=" + windowSamples
                     + " p50=" + (p50Nanos / 1_000_000) + "ms"
                     + " p95=" + (p95Nanos / 1_000_000) + "ms"
-                    + " p99=" + (p99Nanos / 1_000_000) + "ms";
+                    + " p99=" + (p99Nanos / 1_000_000) + "ms"
+                    + (windowServer503 > 0 ? " 503=" + windowServer503 : "");
         }
     }
 }

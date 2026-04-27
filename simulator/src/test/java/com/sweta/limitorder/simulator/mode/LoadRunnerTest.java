@@ -75,6 +75,51 @@ class LoadRunnerTest {
                 .contains("load:duration-elapsed");
     }
 
+    // ---------- Plan §9.1 — backpressure decision (unit) ----------
+
+    @Test
+    void backpressureLatchesOnP99SpikeAndReleasesOnRecovery() {
+        var throttle = new java.util.concurrent.atomic.AtomicReference<>(1.0);
+        var baseline = new java.util.concurrent.atomic.AtomicLong(0);
+
+        // Window 1: nominal — seeds the baseline (p99 = 50ms).
+        LoadRunner.evaluateBackpressure(snap(50_000_000L, 0), baseline, throttle);
+        assertThat(throttle.get()).isEqualTo(1.0);
+        assertThat(baseline.get()).isEqualTo(50_000_000L);
+
+        // Window 2: p99 doubles to 110ms — must engage.
+        LoadRunner.evaluateBackpressure(snap(110_000_000L, 0), baseline, throttle);
+        assertThat(throttle.get()).isEqualTo(2.0);
+
+        // Window 3: still elevated (p99=80ms > 1.5×baseline=75ms) — stays engaged.
+        LoadRunner.evaluateBackpressure(snap(80_000_000L, 0), baseline, throttle);
+        assertThat(throttle.get()).isEqualTo(2.0);
+
+        // Window 4: p99 drops below 1.5×baseline — release.
+        LoadRunner.evaluateBackpressure(snap(60_000_000L, 0), baseline, throttle);
+        assertThat(throttle.get()).isEqualTo(1.0);
+    }
+
+    @Test
+    void backpressureEngagesOnAny503EvenWithoutP99Spike() {
+        var throttle = new java.util.concurrent.atomic.AtomicReference<>(1.0);
+        var baseline = new java.util.concurrent.atomic.AtomicLong(0);
+        // Seed baseline.
+        LoadRunner.evaluateBackpressure(snap(50_000_000L, 0), baseline, throttle);
+        // p99 unchanged but a 503 lands — still engage.
+        LoadRunner.evaluateBackpressure(snap(50_000_000L, 1), baseline, throttle);
+        assertThat(throttle.get()).isEqualTo(2.0);
+    }
+
+    private static LoadStats.Snapshot snap(long p99Nanos, long server503) {
+        // submitted/accepted/rejected are immaterial for the trigger; the
+        // window must be non-empty (windowSamples > 0) for baseline to seed.
+        return new LoadStats.Snapshot(
+                100, 100, 0, 100,
+                p99Nanos / 2, (long) (p99Nanos * 0.95), p99Nanos,
+                server503);
+    }
+
     @Test
     void bootstrapFailureSurfacesAsAssertionFailure() {
         wm.resetMappings();

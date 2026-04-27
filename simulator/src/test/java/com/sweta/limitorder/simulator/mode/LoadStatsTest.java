@@ -53,4 +53,29 @@ class LoadStatsTest {
                 .contains("p50=")
                 .contains("p99=");
     }
+
+    @Test
+    void server503CountIsPerWindow() {
+        var stats = new LoadStats();
+        stats.recordServer503(); stats.recordServer503();
+        var snap1 = stats.snapshotAndReset();
+        assertThat(snap1.windowServer503()).isEqualTo(2);
+
+        // Next window should start fresh — 503 count is per-window, not cumulative.
+        var snap2 = stats.snapshotAndReset();
+        assertThat(snap2.windowServer503()).isZero();
+    }
+
+    @Test
+    void formatLineSurfacesWindow503OnlyWhenNonZero() {
+        var stats = new LoadStats();
+        stats.recordSubmitted();
+        stats.recordLatencyNanos(1_000_000L);
+        assertThat(stats.snapshotAndReset().formatLine()).doesNotContain("503=");
+
+        stats.recordSubmitted();
+        stats.recordServer503();
+        stats.recordLatencyNanos(1_000_000L);
+        assertThat(stats.snapshotAndReset().formatLine()).contains("503=1");
+    }
 }

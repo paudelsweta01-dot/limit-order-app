@@ -70,7 +70,19 @@ public class MultiInstanceCommand implements Callable<Integer> {
         MultiInstanceRunner mi = new MultiInstanceRunner(apiA, apiB, cache, creds,
                 ConsistencyCheckRunner.DEFAULT_USERNAMES,
                 users, rate, Duration.ofSeconds(durationSeconds), seed);
-        RunReport report = mi.run(ctx.runId);
+
+        // Plan §9.2 — graceful shutdown on SIGTERM. Hook flips the runner's
+        // stop flag; main is in mi.run() polling for it, returns shortly
+        // after, and the post-run consistency check + report write still execute.
+        Thread shutdownHook = new Thread(mi::requestStop, "simulator-multi-sigterm");
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+        RunReport report;
+        try {
+            report = mi.run(ctx.runId);
+        } finally {
+            try { Runtime.getRuntime().removeShutdownHook(shutdownHook); }
+            catch (IllegalStateException alreadyShuttingDown) { /* hook already firing */ }
+        }
 
         // Plan §6.4 — same end-of-run consistency check as Phase 4.
         // Hits --baseUrl (typically the LB) so the data is the union

@@ -61,7 +61,21 @@ public class LoadCommand implements Callable<Integer> {
         LoadRunner load = new LoadRunner(api, cache, creds,
                 ConsistencyCheckRunner.DEFAULT_USERNAMES,
                 users, rate, Duration.ofSeconds(durationSeconds), seed);
-        RunReport report = load.run(ctx.runId);
+
+        // Plan §9.2 — graceful shutdown on SIGTERM / SIGINT. The hook flips
+        // the runner's stop flag; main is blocked in load.run() polling
+        // every 100 ms so it returns shortly after, falls through into the
+        // post-run consistency check + report write, and the JVM
+        // shutdown completes with a complete report on disk.
+        Thread shutdownHook = new Thread(load::requestStop, "simulator-load-sigterm");
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+        RunReport report;
+        try {
+            report = load.run(ctx.runId);
+        } finally {
+            try { Runtime.getRuntime().removeShutdownHook(shutdownHook); }
+            catch (IllegalStateException alreadyShuttingDown) { /* hook already firing */ }
+        }
 
         if (!skipConsistencyCheck) {
             ConsistencyCheckRunner check = new ConsistencyCheckRunner(api, cache, creds);
